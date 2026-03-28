@@ -239,7 +239,7 @@ function resolveX() {
 /** Push player out of solid tiles along the Y axis after vertical movement. */
 function resolveY() {
   const c1 = Math.max(0,      Math.floor(player.x            / TILE));
-  const c2 = Math.min(COLS-1, Math.floor((player.x + player.w) / TILE));
+  const c2 = Math.min(COLS-1, Math.floor((player.x + player.w - 1) / TILE));
   const r1 = Math.floor(player.y            / TILE);
   const r2 = Math.min(ROWS-1, Math.floor((player.y + player.h) / TILE));
 
@@ -701,7 +701,7 @@ function drawGameOverScreen() {
 }
 
 function drawWinScreen() {
-  // Colourful sky
+  // Colorful sky
   const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
   grad.addColorStop(0, '#ff9800');
   grad.addColorStop(0.5, '#ffeb3b');
