@@ -20,6 +20,31 @@ const COIN_SCORE    = 10;
 const COIN_R        = 8;     // coin radius px
 const FOOD_R        = 7;     // food radius px
 
+// ─── ENEMY / TRAP CONSTANTS ──────────────────────────────────────────────────
+const BEETLE_W      = 32;
+const BEETLE_H      = 24;
+const BEETLE_SPEED  = 60;
+const BEETLE_POINTS = 50;
+
+const MINION_W      = 28;
+const MINION_H      = 40;
+const MINION_SPEED  = 40;
+const MINION_POINTS = 150;
+const MINION_SHOOT_COOLDOWN = 2.0;  // seconds between shots
+const PROJ_SPEED    = 200;          // px/s
+
+const SPIKE_W       = 32;
+const SPIKE_H       = 16;
+
+const NET_W         = 40;
+const NET_H         = 40;
+const NET_SLOW_DUR  = 2.0;   // seconds of 50% slowdown after escaping
+const NET_TRAP_DUR  = 1.5;   // seconds trapped before auto-release
+
+const INVINCIBLE_DUR = 1.5;  // seconds of invincibility after taking damage
+const BOUNCE_VEL    = -300;  // upward bounce when stomping an enemy
+const PLAYER_LIVES  = 3;
+
 // ─── CANVAS ──────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
@@ -37,6 +62,11 @@ let tileMap   = [];
 let coins     = [];
 let foods     = [];
 let birdhouse = null;
+let beetles      = [];
+let spikeTraps   = [];
+let netTraps     = [];
+let minions      = [];
+let projectiles  = [];
 
 // ─── CLOUD DATA (fixed world positions) ──────────────────────────────────────
 const CLOUDS = [
@@ -159,6 +189,87 @@ const FOOD_DEFS = [
   [10, 38],   // section 3 ground
   [10, 54],   // final section
 ];
+
+// ─── ENEMY / TRAP DEFINITIONS ────────────────────────────────────────────────
+// Beetles: [tileRow of surface, leftCol, rightCol] – patrol between left & right col x-coords
+const BEETLE_DEFS = [
+  [10,  5, 11],   // start ground
+  [10, 19, 26],   // section 2 ground
+  [8,  23, 25],   // section 2 mid-platform  (row 9 → surface row 8)
+  [10, 34, 41],   // section 3 ground
+  [6,  35, 37],   // section 3 mid-platform  (row 7 → surface row 6)
+  [10, 47, 55],   // final stretch
+];
+
+// SpikeTrap: [tileRow (top of spike), tileCol]
+const SPIKE_DEFS = [
+  [10, 14], [10, 15], [10, 16],   // gap 1 (landing zone edge)
+  [10, 28], [10, 33],             // gap 2 edges
+  [10, 43], [10, 46],             // gap 3 edges
+  [10, 50], [10, 52],             // final stretch danger spots
+];
+
+// NetTrap: [tileRow, tileCol] – float in the air as hazard zones
+const NET_DEFS = [
+  [9, 13],   // over gap 1
+  [8, 30],   // bridge over gap 2
+  [7, 44],   // bridge over gap 3
+];
+
+// Minions (Jäger-Handlanger): [tileRow of surface, tileCol (start x)]
+const MINION_DEFS = [
+  [10, 38],   // section 3 ground
+  [10, 53],   // final stretch
+];
+
+function buildBeetles() {
+  return BEETLE_DEFS.map(([surfRow, leftCol, rightCol]) => ({
+    x:        leftCol * TILE,
+    y:        surfRow * TILE - BEETLE_H,   // sits on surface
+    w:        BEETLE_W,
+    h:        BEETLE_H,
+    vx:       BEETLE_SPEED,
+    leftBound:  leftCol * TILE,
+    rightBound: (rightCol + 1) * TILE - BEETLE_W,
+    direction:  1,
+    hp:       1,
+    dead:     false,
+  }));
+}
+
+function buildSpikeTraps() {
+  return SPIKE_DEFS.map(([row, col]) => ({
+    x: col * TILE,
+    y: row * TILE,
+    w: SPIKE_W,
+    h: SPIKE_H,
+  }));
+}
+
+function buildNetTraps() {
+  return NET_DEFS.map(([row, col]) => ({
+    x: col * TILE - NET_W / 2,
+    y: row * TILE,
+    w: NET_W,
+    h: NET_H,
+    active:   true,
+    trapTimer: 0,       // > 0 while player is trapped inside
+  }));
+}
+
+function buildMinions() {
+  return MINION_DEFS.map(([surfRow, col]) => ({
+    x:            col * TILE,
+    y:            surfRow * TILE - MINION_H,
+    w:            MINION_W,
+    h:            MINION_H,
+    vx:           0,
+    hp:           2,
+    dead:         false,
+    shootTimer:   MINION_SHOOT_COOLDOWN,
+    facingLeft:   true,   // shoots toward player
+  }));
+}
 
 function buildCoins() {
   return COIN_DEFS.map(([row, col]) => ({
