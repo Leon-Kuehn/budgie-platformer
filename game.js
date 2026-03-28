@@ -13,7 +13,7 @@ const FLUTTER_VMAX  = 80;    // max fall speed while fluttering px/s
 const MOVE_SPEED    = 200;   // px/s horizontal
 const JUMP_VEL      = -520;  // px/s upward impulse
 
-const FOOD_DRAIN    = 8;     // food units per second
+const FOOD_DRAIN    = 6;     // food units per second (easy – Level 1)
 const FOOD_COLLECT  = 35;    // food restored per pickup
 const FOOD_MAX      = 100;
 const COIN_SCORE    = 10;
@@ -27,16 +27,17 @@ canvas.width  = CANVAS_W;
 canvas.height = CANVAS_H;
 
 // ─── GAME STATE ──────────────────────────────────────────────────────────────
-let gameState = 'menu';   // 'menu' | 'playing' | 'gameover' | 'win'
-let score     = 0;
-let bestScore = 0;
-let foodMeter = FOOD_MAX;
-let player    = null;
-let cameraX   = 0;
-let tileMap   = [];
-let coins     = [];
-let foods     = [];
-let birdhouse = null;
+let gameState          = 'menu';  // 'menu'|'playing'|'transitioning'|'level2'|'gameover'|'win'
+let score              = 0;
+let bestScore          = 0;
+let foodMeter          = FOOD_MAX;
+let player             = null;
+let cameraX            = 0;
+let tileMap            = [];
+let coins              = [];
+let foods              = [];
+let gardenGate         = null;
+let levelCompleteTimer = 0;
 
 // ─── CLOUD DATA (fixed world positions) ──────────────────────────────────────
 const CLOUDS = [
@@ -67,6 +68,11 @@ window.addEventListener('keydown', e => {
           player.onGround = false;
         }
         break;
+      case 'transitioning':
+        // skip animation with Enter/Space
+        if (e.code === 'Enter' || e.code === 'Space') levelCompleteTimer = 999;
+        break;
+      case 'level2':
       case 'gameover':
       case 'win':
         if (e.code === 'KeyR') startGame();
@@ -92,27 +98,25 @@ function buildTileMap() {
           map[r][c] = 1;
   }
 
-  // Ground sections (3 tiles deep, rows 11–13), with three gaps
-  fill(11,  0, 13, 12);   // start ground      (cols  0–12)
-  // gap: cols 13–17
-  fill(11, 18, 13, 27);   // section 2         (cols 18–27)
-  // gap: cols 28–33
-  fill(11, 34, 13, 42);   // section 3         (cols 34–42)
-  // gap: cols 43–46
-  fill(11, 47, 13, 59);   // final stretch     (cols 47–59)
+  // ── Ground (3 tiles deep, rows 11–13) ──
+  // Start section: cols 0–21
+  fill(11,  0, 13, 21);
+  // One large gap: cols 22–30 (9 tiles = 288 px → scary but bridgeable)
+  // End section: cols 31–59
+  fill(11, 31, 13, 59);
 
-  // Floating platforms (single-tile-thick)
-  fill(8,  5,  8,  8);    // start area, mid-height
-  fill(7,  9,  7, 12);    // start area, high
-  fill(9, 13,  9, 16);    // bridge over gap 1
-  fill(6, 19,  6, 22);    // section 2, high
-  fill(9, 23,  9, 26);    // section 2, mid
-  fill(9, 29,  9, 31);    // bridge over gap 2
-  fill(7, 35,  7, 38);    // section 3, mid
-  fill(5, 39,  5, 42);    // section 3, high
-  fill(8, 43,  8, 46);    // bridge over gap 3
-  fill(7, 50,  7, 53);    // final section, mid
-  fill(6, 55,  6, 58);    // near birdhouse
+  // ── Platform group 1 – start area (low, easy) ──
+  fill(8,  5,  8, 11);   // 7 tiles wide, row 8
+
+  // ── Platform group 2 – approach + bridge over gap ──
+  fill(7, 14,  7, 19);   // approach ledge, row 7, 6 tiles
+  fill(7, 22,  7, 29);   // bridge directly over the gap, row 7, 8 tiles
+
+  // ── Platform group 3 – mid section ──
+  fill(7, 37,  7, 43);   // 7 tiles wide, row 7
+
+  // ── Platform group 4 – near gate (slightly higher) ──
+  fill(6, 50,  6, 56);   // 7 tiles wide, row 6
 
   return map;
 }
@@ -120,44 +124,27 @@ function buildTileMap() {
 // ─── ENTITY DEFINITIONS ──────────────────────────────────────────────────────
 // Each entry is [tileRow, tileCol]; entity is centred inside that tile cell.
 const COIN_DEFS = [
-  // Start ground (row 11 → coins sit at row 10)
-  [10,  3], [10,  7], [10, 11],
-  // Platform row 8 → coins at row 7
-  [7,  5],  [7,  6],  [7,  8],
-  // Platform row 7 → coins at row 6
-  [6,  9],  [6, 11],
-  // Bridge over gap 1 (row 9) → coins at row 8
-  [8, 13],  [8, 15],  [8, 16],
-  // Section 2 ground → coins at row 10
-  [10, 19], [10, 25],
-  // Section 2 high platform (row 6) → coins at row 5
-  [5, 19],  [5, 21],
-  // Section 2 mid platform (row 9) → coins at row 8
-  [8, 23],  [8, 25],
-  // Bridge over gap 2 (row 9) → coins at row 8
-  [8, 29],  [8, 31],
-  // Section 3 ground
-  [10, 36], [10, 41],
-  // Section 3 mid platform (row 7) → coins at row 6
-  [6, 35],  [6, 37],  [6, 38],
-  // Section 3 high platform (row 5) → coins at row 4
-  [4, 40],  [4, 41],
-  // Bridge over gap 3 (row 8) → coins at row 7
-  [7, 44],  [7, 46],
-  // Final section ground
-  [10, 49], [10, 53], [10, 57],
-  // Final mid platform (row 7) → row 6
-  [6, 50],  [6, 52],
-  // Near-birdhouse platform (row 6) → row 5
-  [5, 55],  [5, 57],
+  // Start ground (row 11 → coins at row 10)
+  [10,  3], [10,  8], [10, 16],
+  // Platform group 1 (row 8 → coins at row 7)
+  [7,  6],  [7,  9],
+  // Gap bridge (row 7 → coins at row 6)
+  [6, 23],  [6, 26],  [6, 29],
+  // End section ground (row 11 → coins at row 10)
+  [10, 33], [10, 44],
+  // Platform group 3 (row 7 → coins at row 6)
+  [6, 38],  [6, 42],
+  // Platform group 4 (row 6 → coins at row 5)
+  [5, 51],  [5, 55],
+  // Near gate
+  [10, 57],
 ];
 
 const FOOD_DEFS = [
-  [10,  8],   // start area
-  [10, 22],   // section 2 ground
-  [8,  30],   // bridge over gap 2
-  [10, 38],   // section 3 ground
-  [10, 54],   // final section
+  [10, 11],   // start area
+  [10, 20],   // just before the gap
+  [10, 40],   // mid section
+  [10, 56],   // near gate
 ];
 
 function buildCoins() {
@@ -192,16 +179,17 @@ function createPlayer() {
 
 // ─── START / RESET ───────────────────────────────────────────────────────────
 function startGame() {
-  score     = 0;
-  foodMeter = FOOD_MAX;
-  gameState = 'playing';
-  cameraX   = 0;
-  tileMap   = buildTileMap();
-  player    = createPlayer();
-  coins     = buildCoins();
-  foods     = buildFoods();
-  // Birdhouse sits on top of ground row 11 (y = 11*TILE = 352), 64 px tall
-  birdhouse = { x: 57 * TILE, y: 11 * TILE - 64, w: 64, h: 64 };
+  score              = 0;
+  foodMeter          = FOOD_MAX;
+  gameState          = 'playing';
+  cameraX            = 0;
+  levelCompleteTimer = 0;
+  tileMap            = buildTileMap();
+  player             = createPlayer();
+  coins              = buildCoins();
+  foods              = buildFoods();
+  // Garden gate sits on top of ground row 11 (y = 11*TILE = 352), 80 px tall, 2 tiles wide
+  gardenGate = { x: 57 * TILE, y: 11 * TILE - 80, w: 64, h: 80 };
 }
 
 // ─── COLLISION HELPERS ───────────────────────────────────────────────────────
@@ -263,6 +251,15 @@ function resolveY() {
 
 // ─── UPDATE ──────────────────────────────────────────────────────────────────
 function update(dt) {
+  // Handle level-transition countdown (player frozen, scene still drawn)
+  if (gameState === 'transitioning') {
+    levelCompleteTimer += dt;
+    if (levelCompleteTimer >= 2.5) {
+      gameState = 'level2';
+    }
+    return;
+  }
+
   // Horizontal input
   if (keys.has('ArrowLeft') || keys.has('KeyA')) {
     player.vx = -MOVE_SPEED;
@@ -339,11 +336,12 @@ function checkCollections() {
     }
   }
 
-  // Win: reach the birdhouse
-  if (birdhouse && rectsOverlap(px, py, pw, ph,
-      birdhouse.x, birdhouse.y, birdhouse.w, birdhouse.h)) {
+  // Goal: reach the garden gate
+  if (gardenGate && rectsOverlap(px, py, pw, ph,
+      gardenGate.x + 10, gardenGate.y, gardenGate.w - 20, gardenGate.h)) {
     bestScore = Math.max(bestScore, score);
-    gameState = 'win';
+    gameState = 'transitioning';
+    levelCompleteTimer = 0;
   }
 }
 
@@ -405,55 +403,90 @@ function drawTile(sx, sy, row) {
   }
 }
 
-function drawBirdhouse() {
-  const sx = Math.floor(birdhouse.x - cameraX);
-  const sy = birdhouse.y;
-  const w  = birdhouse.w;
-  const h  = birdhouse.h;
-  const bodyTop = sy + Math.floor(h * 0.38);
+function drawGardenGate() {
+  const sx = Math.floor(gardenGate.x - cameraX);
+  const sy = gardenGate.y;
+  const w  = gardenGate.w;
+  const h  = gardenGate.h;
+  const postW = 10;
+  const archH = 16;
 
-  // Body
-  ctx.fillStyle = '#8b5e3c';
-  ctx.fillRect(sx, bodyTop, w, h - Math.floor(h * 0.38));
-  // Wood grain on body
-  ctx.fillStyle = '#7a4e2d';
-  ctx.fillRect(sx + 4, bodyTop + 4, 4, h - bodyTop - 8);
-  ctx.fillRect(sx + w - 10, bodyTop + 4, 4, h - bodyTop - 8);
+  // Posts – dark green wood
+  ctx.fillStyle = '#1b5e20';
+  ctx.fillRect(sx,              sy, postW, h);
+  ctx.fillRect(sx + w - postW,  sy, postW, h);
+  // Post highlights
+  ctx.fillStyle = '#2e7d32';
+  ctx.fillRect(sx + 2,              sy + 2, postW - 4, h - 4);
+  ctx.fillRect(sx + w - postW + 2,  sy + 2, postW - 4, h - 4);
 
-  // Roof (trapezoid drawn as two triangles + rect)
-  ctx.fillStyle = '#c0392b';
-  ctx.beginPath();
-  ctx.moveTo(sx - 5,       bodyTop);
-  ctx.lineTo(sx + w / 2,   sy);
-  ctx.lineTo(sx + w + 5,   bodyTop);
-  ctx.closePath();
-  ctx.fill();
-  // Roof ridge
-  ctx.fillStyle = '#a93226';
-  ctx.beginPath();
-  ctx.moveTo(sx + w / 2 - 4, sy + 4);
-  ctx.lineTo(sx + w / 2 + 4, sy + 4);
-  ctx.lineTo(sx + w / 2 + 2, bodyTop);
-  ctx.lineTo(sx + w / 2 - 2, bodyTop);
-  ctx.closePath();
-  ctx.fill();
+  // Top cross-bar
+  ctx.fillStyle = '#1b5e20';
+  ctx.fillRect(sx, sy, w, archH);
+  ctx.fillStyle = '#2e7d32';
+  ctx.fillRect(sx + 2, sy + 2, w - 4, archH - 4);
 
-  // Entry hole
-  ctx.fillStyle = '#1a0a00';
-  ctx.beginPath();
-  ctx.ellipse(sx + w / 2, bodyTop + 18, 9, 10, 0, 0, Math.PI * 2);
-  ctx.fill();
+  // Leafy arch decoration above the gate
+  const leafW = 9;
+  const leafsX = [sx + postW, sx + postW + leafW + 2, sx + postW + (leafW + 2) * 2,
+                  sx + w - postW - leafW * 3 - 2];
+  ctx.fillStyle = '#4caf50';
+  for (const lx of leafsX) {
+    ctx.fillRect(lx, sy - 10, leafW, 12);
+  }
+  ctx.fillStyle = '#81c784';
+  for (const lx of leafsX) {
+    ctx.fillRect(lx + 2, sy - 9, leafW - 4, 8);
+  }
+  // Small flower dots on the arch
+  ctx.fillStyle = '#fdd835';
+  ctx.fillRect(sx + postW + 3,               sy - 10, 4, 4);
+  ctx.fillRect(sx + postW + leafW * 2 + 5,   sy - 10, 4, 4);
 
-  // Perch
-  ctx.fillStyle = '#6b4226';
-  ctx.fillRect(sx + w / 2 - 1, bodyTop + 28, 2, 10);
-  ctx.fillRect(sx + w / 2 - 5, bodyTop + 36, 10, 2);
+  // Vine blobs on left post
+  ctx.fillStyle = '#388e3c';
+  ctx.fillRect(sx + postW - 4, sy + 20, 6, 5);
+  ctx.fillRect(sx + postW - 5, sy + 34, 6, 5);
+  ctx.fillRect(sx + postW - 4, sy + 48, 6, 5);
+  // Vine blobs on right post
+  ctx.fillRect(sx + w - postW - 2, sy + 26, 6, 5);
+  ctx.fillRect(sx + w - postW - 3, sy + 40, 6, 5);
+  ctx.fillRect(sx + w - postW - 2, sy + 54, 6, 5);
 
-  // "HOME" label
-  ctx.fillStyle = '#fff8e7';
-  ctx.font = '5px "Press Start 2P", monospace';
+  // Arrow in the passage
+  ctx.fillStyle = '#fdd835';
+  ctx.font = '11px "Press Start 2P", monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('HOME', sx + w / 2, bodyTop + h - Math.floor(h * 0.38) - 4);
+  ctx.textBaseline = 'middle';
+  ctx.fillText('►', sx + w / 2, sy + h * 0.62);
+}
+
+// Decorative flowers drawn on top of the grass (pixel-art style)
+const FLOWER_DEFS_DRAW = [
+  { wx: 10 * TILE + 10 }, { wx: 17 * TILE + 6  },
+  { wx: 35 * TILE + 14 }, { wx: 47 * TILE + 8  },
+  { wx: 53 * TILE + 12 },
+];
+
+function drawFlowers() {
+  // Flowers sit on top of ground row 11 (y = 11 * TILE)
+  const groundY = 11 * TILE;
+  for (const f of FLOWER_DEFS_DRAW) {
+    const sx = Math.floor(f.wx - cameraX);
+    if (sx < -12 || sx > CANVAS_W + 12) continue;
+
+    // Stem
+    ctx.fillStyle = '#388e3c';
+    ctx.fillRect(sx,     groundY - 10, 2, 10);
+    // Left leaf
+    ctx.fillRect(sx - 3, groundY - 6,  4, 3);
+    // Flower head (red)
+    ctx.fillStyle = '#e53935';
+    ctx.fillRect(sx - 2, groundY - 14, 6, 5);
+    // Centre dot (yellow)
+    ctx.fillStyle = '#fdd835';
+    ctx.fillRect(sx,     groundY - 13, 2, 3);
+  }
 }
 
 function drawPlayer() {
@@ -559,6 +592,12 @@ function drawHUD() {
   ctx.textAlign = 'left';
   ctx.fillText(`SCORE ${score}`, 10, 22);
 
+  // Level name below score
+  ctx.fillStyle = '#a5d6a7';
+  ctx.font = '5px "Press Start 2P", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('LEVEL 1 \u2013 Der Garten', 10, 37);
+
   // Food meter (center)
   const barW = 180, barH = 14;
   const barX = CANVAS_W / 2 - barW / 2;
@@ -659,7 +698,7 @@ function drawMenuScreen() {
   ctx.fillStyle = 'rgba(255,255,255,0.75)';
   ctx.font = '7px "Press Start 2P", monospace';
   ctx.fillText('← → MOVE    SPACE / ↑  JUMP & FLUTTER', CANVAS_W / 2, 278);
-  ctx.fillText('Collect coins & seeds · reach the HOME', CANVAS_W / 2, 300);
+  ctx.fillText('Collect coins & seeds \u00b7 reach the gate', CANVAS_W / 2, 300);
 
   // Press Enter (blinking)
   if (Math.floor(Date.now() / 550) % 2 === 0) {
@@ -700,26 +739,66 @@ function drawGameOverScreen() {
   }
 }
 
-function drawWinScreen() {
-  // Colorful sky
+function drawTransitionScreen() {
+  // Draw the game world in background (frozen)
+  drawBackground();
+  drawLevelTiles();
+  drawFlowers();
+  if (gardenGate) drawGardenGate();
+  for (const food of foods) if (!food.collected) drawFood(food);
+  for (const coin of coins) if (!coin.collected) drawCoin(coin);
+  drawPlayer();
+
+  // Dark overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = '#000';
+  ctx.shadowBlur = 12;
+
+  ctx.fillStyle = '#a5d6a7';
+  ctx.font = '8px "Press Start 2P", monospace';
+  ctx.fillText('LEVEL 1 \u2013 Der Garten  GESCHAFFT!', CANVAS_W / 2, 180);
+
+  ctx.fillStyle = '#fdd835';
+  ctx.font = '12px "Press Start 2P", monospace';
+  ctx.fillText('Weiter in den Wald...', CANVAS_W / 2, 220);
+
+  ctx.shadowBlur = 0;
+
+  // Animated dots
+  const dots = '.'.repeat((Math.floor(Date.now() / 400) % 4));
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = '9px "Press Start 2P", monospace';
+  ctx.fillText(dots, CANVAS_W / 2, 255);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.font = '6px "Press Start 2P", monospace';
+  ctx.fillText('ENTER / LEERTASTE zum \u00dcberspringen', CANVAS_W / 2, 295);
+}
+
+function drawLevel2Screen() {
+  // Forest-green sky gradient for "Der Wald"
   const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-  grad.addColorStop(0, '#ff9800');
-  grad.addColorStop(0.5, '#ffeb3b');
-  grad.addColorStop(1, '#a8d8f0');
+  grad.addColorStop(0, '#1b5e20');
+  grad.addColorStop(0.6, '#2e7d32');
+  grad.addColorStop(1, '#388e3c');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-  // Scattered confetti dots
-  const colours = ['#f44336','#e91e63','#9c27b0','#2196f3','#4caf50','#ffd600'];
-  const seed    = Math.floor(Date.now() / 100);
-  for (let i = 0; i < 40; i++) {
-    const px = ((i * 397 + seed * 3) % CANVAS_W);
-    const py = ((i * 211 + seed * 7) % CANVAS_H);
+  // Scattered leaf particles
+  const colours = ['#4caf50','#66bb6a','#2e7d32','#a5d6a7','#81c784'];
+  const seed    = Math.floor(Date.now() / 120);
+  for (let i = 0; i < 30; i++) {
+    const lx = ((i * 317 + seed * 5) % CANVAS_W);
+    const ly = ((i * 191 + seed * 9) % CANVAS_H);
     ctx.fillStyle = colours[i % colours.length];
-    ctx.fillRect(px, py, 6, 6);
+    ctx.fillRect(lx, ly, 5, 5);
   }
 
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
   ctx.textAlign = 'center';
@@ -727,33 +806,30 @@ function drawWinScreen() {
   ctx.shadowColor = '#000';
   ctx.shadowBlur = 14;
 
+  ctx.fillStyle = '#a5d6a7';
+  ctx.font = '8px "Press Start 2P", monospace';
+  ctx.fillText('LEVEL 2 \u2013 Der Wald', CANVAS_W / 2, 150);
+
   ctx.fillStyle = '#fdd835';
-  ctx.font = '16px "Press Start 2P", monospace';
-  ctx.fillText('YOU MADE IT HOME!', CANVAS_W / 2, 155);
+  ctx.font = '14px "Press Start 2P", monospace';
+  ctx.fillText('COMING SOON', CANVAS_W / 2, 190);
 
   ctx.shadowBlur = 0;
 
-  // Draw a small birdhouse decoration
-  const bhx = CANVAS_W / 2 - 32, bhy = 185;
-  ctx.fillStyle = '#c0392b';
-  ctx.beginPath();
-  ctx.moveTo(bhx - 6, bhy + 24); ctx.lineTo(bhx + 32, bhy); ctx.lineTo(bhx + 70, bhy + 24);
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#8b5e3c';
-  ctx.fillRect(bhx, bhy + 24, 64, 42);
-  ctx.fillStyle = '#1a0a00';
-  ctx.beginPath(); ctx.arc(bhx + 32, bhy + 40, 9, 0, Math.PI * 2); ctx.fill();
-
   ctx.fillStyle = '#fff';
-  ctx.font = '10px "Press Start 2P", monospace';
-  ctx.fillText(`FINAL SCORE :  ${score}`, CANVAS_W / 2, 275);
-  ctx.fillText(`BEST  SCORE :  ${bestScore}`, CANVAS_W / 2, 302);
+  ctx.font = '9px "Press Start 2P", monospace';
+  ctx.fillText(`Level 1 Score :  ${score}`, CANVAS_W / 2, 255);
+  ctx.fillText(`Best Score    :  ${bestScore}`, CANVAS_W / 2, 280);
 
   if (Math.floor(Date.now() / 550) % 2 === 0) {
     ctx.fillStyle = '#4caf50';
-    ctx.font = '9px "Press Start 2P", monospace';
-    ctx.fillText('PRESS  R  TO  PLAY  AGAIN', CANVAS_W / 2, 355);
+    ctx.font = '8px "Press Start 2P", monospace';
+    ctx.fillText('R  \u2013  Level 1 nochmal spielen', CANVAS_W / 2, 345);
   }
+}
+
+function drawWinScreen() {
+  drawLevel2Screen();
 }
 
 // ─── LEVEL TILE RENDERING ────────────────────────────────────────────────────
@@ -775,8 +851,11 @@ function drawGame() {
   drawBackground();
   drawLevelTiles();
 
-  // Birdhouse
-  if (birdhouse) drawBirdhouse();
+  // Flower decorations
+  drawFlowers();
+
+  // Garden gate
+  if (gardenGate) drawGardenGate();
 
   // Foods
   for (const food of foods)
@@ -807,6 +886,13 @@ function loop(timestamp) {
     case 'playing':
       update(dt);
       drawGame();
+      break;
+    case 'transitioning':
+      update(dt);
+      drawTransitionScreen();
+      break;
+    case 'level2':
+      drawLevel2Screen();
       break;
     case 'gameover':
       drawGameOverScreen();
