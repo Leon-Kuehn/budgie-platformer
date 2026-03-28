@@ -27,7 +27,7 @@ canvas.width  = CANVAS_W;
 canvas.height = CANVAS_H;
 
 // ─── GAME STATE ──────────────────────────────────────────────────────────────
-let gameState = 'menu';   // 'menu' | 'playing' | 'gameover' | 'win'
+let gameState = 'menu';   // 'menu' | 'intro' | 'playing' | 'gameover' | 'win'
 let score     = 0;
 let bestScore = 0;
 let foodMeter = FOOD_MAX;
@@ -59,6 +59,9 @@ window.addEventListener('keydown', e => {
   if (!wasHeld) {
     switch (gameState) {
       case 'menu':
+        if (e.code === 'Enter') gameState = 'intro';
+        break;
+      case 'intro':
         if (e.code === 'Enter') startGame();
         break;
       case 'playing':
@@ -597,6 +600,21 @@ function drawHUD() {
   ctx.font = '8px "Press Start 2P", monospace';
   ctx.textAlign = 'right';
   ctx.fillText(`BEST ${bestScore}`, CANVAS_W - 10, 22);
+
+  // Level name (top center, below food bar)
+  ctx.fillStyle = 'rgba(255,255,255,0.80)';
+  ctx.font = '5px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('LEVEL 1 – Der Garten', CANVAS_W / 2, 36);
+
+  // Gelbi icon (small yellow budgie) in the top-right corner as rescue reminder
+  const gx = CANVAS_W - 52;
+  const gy = 4;
+  ctx.fillStyle = '#fdd835';
+  ctx.fillRect(gx + 3, gy + 2, 8, 9);  // body
+  ctx.fillRect(gx + 4, gy,     6, 5);  // head
+  ctx.fillStyle = '#111';
+  ctx.fillRect(gx + 7, gy + 1, 2, 2);  // eye
 }
 
 // ─── SCREEN DRAWING ──────────────────────────────────────────────────────────
@@ -666,6 +684,63 @@ function drawMenuScreen() {
     ctx.fillStyle = '#fdd835';
     ctx.font = '10px "Press Start 2P", monospace';
     ctx.fillText('PRESS  ENTER  TO  START', CANVAS_W / 2, 345);
+  }
+}
+
+function drawIntroScreen() {
+  // Black background
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // ── Cage pixel art ──────────────────────────────────────────────────────────
+  const cageX = CANVAS_W / 2 - 36;
+  const cageY = 60;
+  const cageW = 72;
+  const cageH = 80;
+
+  // Cage bars (grey)
+  ctx.fillStyle = '#aaa';
+  ctx.fillRect(cageX, cageY, cageW, 4);          // top bar
+  ctx.fillRect(cageX, cageY + cageH - 4, cageW, 4); // bottom bar
+  ctx.fillRect(cageX, cageY, 4, cageH);           // left side
+  ctx.fillRect(cageX + cageW - 4, cageY, 4, cageH); // right side
+  // Vertical bars
+  for (let i = 1; i < 5; i++) {
+    ctx.fillRect(cageX + Math.round(i * cageW / 5), cageY + 4, 3, cageH - 8);
+  }
+
+  // Yellow budgie (Gelbi) inside cage
+  ctx.fillStyle = '#fdd835';
+  ctx.fillRect(cageX + cageW / 2 - 10, cageY + cageH / 2 - 10, 20, 22); // body
+  ctx.fillRect(cageX + cageW / 2 - 6,  cageY + cageH / 2 - 20, 14, 14); // head
+  // Eye
+  ctx.fillStyle = '#111';
+  ctx.fillRect(cageX + cageW / 2 + 2, cageY + cageH / 2 - 17, 4, 4);
+
+  // ── Story text ───────────────────────────────────────────────────────────────
+  ctx.fillStyle = '#fff';
+  ctx.font = '9px "Press Start 2P", monospace';
+  ctx.fillText('Dein Freund Gelbi wurde vom', CANVAS_W / 2, 185);
+  ctx.fillText('Jäger gefangen!', CANVAS_W / 2, 208);
+
+  ctx.fillStyle = '#fdd835';
+  ctx.font = '11px "Press Start 2P", monospace';
+  ctx.fillText('Rette ihn!', CANVAS_W / 2, 240);
+
+  // ── Gelbi reminder icon + label ──────────────────────────────────────────────
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '7px "Press Start 2P", monospace';
+  ctx.fillText('Du bist der grüne Wellensittich.', CANVAS_W / 2, 290);
+  ctx.fillText('Erreiche das Jagdhaus am Ende des Waldes!', CANVAS_W / 2, 312);
+
+  // ── ENTER prompt (blinking) ──────────────────────────────────────────────────
+  if (Math.floor(Date.now() / 550) % 2 === 0) {
+    ctx.fillStyle = '#fdd835';
+    ctx.font = '10px "Press Start 2P", monospace';
+    ctx.fillText('PRESS  ENTER  TO  START', CANVAS_W / 2, 370);
   }
 }
 
@@ -803,6 +878,9 @@ function loop(timestamp) {
   switch (gameState) {
     case 'menu':
       drawMenuScreen();
+      break;
+    case 'intro':
+      drawIntroScreen();
       break;
     case 'playing':
       update(dt);
