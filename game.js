@@ -4,6 +4,7 @@
 const CANVAS_W      = 800;
 const CANVAS_H      = 448;   // 14 × 32
 const TILE          = 32;
+let   COLS          = 60;    // updated dynamically per level
 let   COLS          = 60;   // updated per level (L1=60, L2=80)
 const ROWS          = 14;
 
@@ -52,6 +53,8 @@ canvas.width  = CANVAS_W;
 canvas.height = CANVAS_H;
 
 // ─── GAME STATE ──────────────────────────────────────────────────────────────
+let gameState    = 'menu';   // 'menu' | 'playing' | 'gameover' | 'win'
+let currentLevel = 1;        // active level number (1 or 3)
 let gameState          = 'menu';  // 'menu'|'playing'|'transitioning'|'level2'|'gameover'|'win'
 let score              = 0;
 let bestScore          = 0;
@@ -73,6 +76,8 @@ let tileMap      = [];
 let coins        = [];
 let foods        = [];
 let birdhouse    = null;
+let enemies      = [];       // Raven enemies (level 3)
+let traps        = [];       // PressureTrap entities (level 3)
 let currentLevel = 1;        // 1 or 2
 let beetles      = [];       // Level 2 enemies
 let spikes       = [];       // Level 2 hazards
@@ -145,6 +150,10 @@ window.addEventListener('keyup', e => keys.delete(e.code));
 
 // ─── LEVEL BUILDING ──────────────────────────────────────────────────────────
 function buildTileMap() {
+  return currentLevel === 3 ? buildLevel3TileMap() : buildLevel1TileMap();
+}
+
+function buildLevel1TileMap() {
   const map = Array.from({ length: ROWS }, () => new Array(COLS).fill(0));
 
   function fill(r1, c1, r2, c2) {
@@ -215,6 +224,55 @@ function buildLevel2TileMap() {
   return map;
 }
 
+function buildLevel3TileMap() {
+  const map = Array.from({ length: ROWS }, () => new Array(COLS).fill(0));
+
+  function fill(r1, c1, r2, c2) {
+    for (let r = r1; r <= r2; r++)
+      for (let c = c1; c <= c2; c++)
+        if (r >= 0 && r < ROWS && c >= 0 && c < COLS)
+          map[r][c] = 1;
+  }
+
+  // Ground sections (3 tiles deep, rows 11–13), with four gaps
+  fill(11,  0, 13,  8);   // start ground       (cols  0–8)
+  // gap: cols 9–14
+  fill(11, 15, 13, 24);   // section 2          (cols 15–24)
+  // gap: cols 25–29
+  fill(11, 30, 13, 40);   // section 3          (cols 30–40)
+  // gap: cols 41–46
+  fill(11, 47, 13, 57);   // section 4          (cols 47–57)
+  // gap: cols 58–62
+  fill(11, 63, 13, 99);   // final stretch      (cols 63–99)
+
+  // Row 9 bridges (low platforms over gaps)
+  fill(9,  10, 9, 13);    // bridge gap 1
+  fill(9,  26, 9, 28);    // bridge gap 2
+  fill(9,  42, 9, 45);    // bridge gap 3
+  fill(9,  59, 9, 61);    // bridge gap 4
+
+  // Row 7 platforms (mid height) – 3 height levels total
+  fill(7,   4, 7,  7);    // start area
+  fill(7,  17, 7, 20);    // section 2
+  fill(7,  32, 7, 35);    // section 3
+  fill(7,  48, 7, 52);    // section 4
+  fill(7,  65, 7, 69);    // final zone A
+  fill(7,  78, 7, 81);    // final zone B
+  fill(7,  88, 7, 91);    // final zone C
+
+  // Row 5 platforms (high)
+  fill(5,   2, 5,  4);    // start high
+  fill(5,  12, 5, 15);    // section 2 high
+  fill(5,  22, 5, 26);    // mid section high
+  fill(5,  37, 5, 40);    // section 3 high
+  fill(5,  53, 5, 57);    // section 4 high
+  fill(5,  70, 5, 74);    // final high A
+  fill(5,  83, 5, 87);    // final high B
+  fill(5,  92, 5, 96);    // near jagdhaus
+
+  return map;
+}
+
 // ─── ENTITY DEFINITIONS ──────────────────────────────────────────────────────
 // Each entry is [tileRow, tileCol]; entity is centred inside that tile cell.
 const COIN_DEFS = [
@@ -273,6 +331,42 @@ const MINION_DEFS = [
   [10, 53],   // final stretch
 ];
 
+// ─── LEVEL 3 ENTITY DEFINITIONS ──────────────────────────────────────────────
+const LEVEL3_COIN_DEFS = [
+  // Section 1 ground (cols 0–8)
+  [10,  3], [10,  6],
+  // Bridge gap 1 (row 9)
+  [8,  11], [8,  12],
+  // Section 2 ground (cols 15–24)
+  [10, 17], [10, 21],
+  // Row 7 mid platform
+  [6,   5], [6,  18],
+  // Bridge gap 2 (row 9)
+  [8,  27],
+  // Section 3 ground (cols 30–40)
+  [10, 32], [10, 37],
+  // Row 5 high platform
+  [4,  13], [4,  23],
+  // Bridge gap 3 (row 9)
+  [8,  43], [8,  44],
+  // Section 4 ground (cols 47–57)
+  [10, 50], [10, 55],
+  // Row 7 platform
+  [6,  33], [6,  49],
+  // Bridge gap 4 (row 9)
+  [8,  60],
+  // Final stretch (cols 63–99)
+  [10, 66], [10, 73], [10, 79], [10, 86],
+  // High platforms in final zone
+  [4,  38], [4,  71], [4,  84],
+];
+
+const LEVEL3_FOOD_DEFS = [
+  [10,  7],   // start area
+  [8,  27],   // bridge gap 2
+  [10, 54],   // section 4 ground
+  [10, 88],   // final stretch
+];
 function buildBeetles() {
   return BEETLE_DEFS.map(([surfRow, leftCol, rightCol]) => ({
     x:        leftCol * TILE,
@@ -323,7 +417,8 @@ function buildMinions() {
 }
 
 function buildCoins() {
-  return COIN_DEFS.map(([row, col]) => ({
+  const defs = currentLevel === 3 ? LEVEL3_COIN_DEFS : COIN_DEFS;
+  return defs.map(([row, col]) => ({
     x: col * TILE + TILE / 2,
     y: row * TILE + TILE / 2,
     collected: false,
@@ -331,7 +426,8 @@ function buildCoins() {
 }
 
 function buildFoods() {
-  return FOOD_DEFS.map(([row, col]) => ({
+  const defs = currentLevel === 3 ? LEVEL3_FOOD_DEFS : FOOD_DEFS;
+  return defs.map(([row, col]) => ({
     x: col * TILE + TILE / 2,
     y: row * TILE + TILE / 2,
     collected: false,
@@ -435,8 +531,66 @@ function createPlayer() {
   };
 }
 
+// ─── ENEMY & TRAP BUILDERS ───────────────────────────────────────────────────
+function buildEnemies() {
+  if (currentLevel === 3) {
+    return [
+      { type: 'raven', x:  5*TILE, y: 7*TILE-22, w: 28, h: 20, vx:  90, color: '#222222', wingPhase: 0.0,
+        patrolLeft:  2*TILE, patrolRight: 10*TILE },
+      { type: 'raven', x: 17*TILE, y: 5*TILE-22, w: 28, h: 20, vx: -80, color: '#1a1a1a', wingPhase: 1.2,
+        patrolLeft: 14*TILE, patrolRight: 24*TILE },
+      { type: 'raven', x: 34*TILE, y: 6*TILE-22, w: 28, h: 20, vx: 100, color: '#222222', wingPhase: 2.5,
+        patrolLeft: 30*TILE, patrolRight: 43*TILE },
+      { type: 'raven', x: 50*TILE, y: 7*TILE-22, w: 28, h: 20, vx: -90, color: '#1a1a1a', wingPhase: 0.8,
+        patrolLeft: 46*TILE, patrolRight: 58*TILE },
+      { type: 'raven', x: 72*TILE, y: 5*TILE-22, w: 28, h: 20, vx:  85, color: '#222222', wingPhase: 3.1,
+        patrolLeft: 66*TILE, patrolRight: 82*TILE },
+    ];
+  }
+  return [];
+}
+
+function buildTraps() {
+  if (currentLevel === 3) {
+    const py = 11 * TILE - 8; // plate top (sits on top of ground)
+    return [
+      { type: 'pressure', x: 18*TILE + 8, y: py, w: 48, h: 8, state: 'idle', timer: 0 },
+      { type: 'pressure', x: 33*TILE + 8, y: py, w: 48, h: 8, state: 'idle', timer: 0 },
+      { type: 'pressure', x: 50*TILE + 8, y: py, w: 48, h: 8, state: 'idle', timer: 0 },
+      { type: 'pressure', x: 70*TILE + 8, y: py, w: 48, h: 8, state: 'idle', timer: 0 },
+    ];
+  }
+  return [];
+}
+
+function buildGoal() {
+  if (currentLevel === 3) {
+    // Hunting-house door at end of level 3
+    return { x: 95 * TILE, y: 11 * TILE - 80, w: 64, h: 80 };
+  }
+  // Level 1: birdhouse sits on top of ground row 11
+  return { x: 57 * TILE, y: 11 * TILE - 64, w: 64, h: 64 };
+}
+
 // ─── START / RESET ───────────────────────────────────────────────────────────
+function startLevel(level) {
+  currentLevel = level;
+  COLS         = (level === 3) ? 100 : 60;
+  gameState    = 'playing';
+  cameraX      = 0;
+  foodMeter    = FOOD_MAX;
+  tileMap      = buildTileMap();
+  player       = createPlayer();
+  coins        = buildCoins();
+  foods        = buildFoods();
+  enemies      = buildEnemies();
+  traps        = buildTraps();
+  birdhouse    = buildGoal();
+}
+
 function startGame() {
+  score = 0;
+  startLevel(1);
   score              = 0;
   foodMeter          = FOOD_MAX;
   gameState          = 'playing';
