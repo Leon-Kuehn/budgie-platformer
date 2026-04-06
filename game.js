@@ -20,6 +20,31 @@ const COIN_SCORE    = 10;
 const COIN_R        = 8;     // coin radius px
 const FOOD_R        = 7;     // food radius px
 
+// ─── ENEMY / TRAP CONSTANTS ──────────────────────────────────────────────────
+const BEETLE_W      = 32;
+const BEETLE_H      = 24;
+const BEETLE_SPEED  = 60;
+const BEETLE_POINTS = 50;
+
+const MINION_W      = 28;
+const MINION_H      = 40;
+const MINION_SPEED  = 40;
+const MINION_POINTS = 150;
+const MINION_SHOOT_COOLDOWN = 2.0;  // seconds between shots
+const PROJ_SPEED    = 200;          // px/s
+
+const SPIKE_W       = 32;
+const SPIKE_H       = 16;
+
+const NET_W         = 40;
+const NET_H         = 40;
+const NET_SLOW_DUR  = 2.0;   // seconds of 50% slowdown after escaping
+const NET_TRAP_DUR  = 1.5;   // seconds trapped before auto-release
+
+const INVINCIBLE_DUR = 1.5;  // seconds of invincibility after taking damage
+const BOUNCE_VEL    = -300;  // upward bounce when stomping an enemy
+const PLAYER_LIVES  = 3;
+
 // ─── CANVAS ──────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
@@ -40,6 +65,21 @@ let birdhouse    = null;
 let currentLevel = 1;        // 1 or 2
 let beetles      = [];       // Level 2 enemies
 let spikes       = [];       // Level 2 hazards
+let gameState = 'menu';   // 'menu' | 'intro' | 'playing' | 'gameover' | 'win'
+let score     = 0;
+let bestScore = 0;
+let foodMeter = FOOD_MAX;
+let player    = null;
+let cameraX   = 0;
+let tileMap   = [];
+let coins     = [];
+let foods     = [];
+let birdhouse = null;
+let beetles      = [];
+let spikeTraps   = [];
+let netTraps     = [];
+let minions      = [];
+let projectiles  = [];
 
 // ─── CLOUD DATA (fixed world positions) ──────────────────────────────────────
 const CLOUDS = [
@@ -62,6 +102,9 @@ window.addEventListener('keydown', e => {
   if (!wasHeld) {
     switch (gameState) {
       case 'menu':
+        if (e.code === 'Enter') gameState = 'intro';
+        break;
+      case 'intro':
         if (e.code === 'Enter') startGame();
         break;
       case 'playing':
@@ -200,6 +243,87 @@ const FOOD_DEFS = [
   [10, 38],   // section 3 ground
   [10, 54],   // final section
 ];
+
+// ─── ENEMY / TRAP DEFINITIONS ────────────────────────────────────────────────
+// Beetles: [tileRow of surface, leftCol, rightCol] – patrol between left & right col x-coords
+const BEETLE_DEFS = [
+  [10,  5, 11],   // start ground
+  [10, 19, 26],   // section 2 ground
+  [8,  23, 25],   // section 2 mid-platform  (row 9 → surface row 8)
+  [10, 34, 41],   // section 3 ground
+  [6,  35, 37],   // section 3 mid-platform  (row 7 → surface row 6)
+  [10, 47, 55],   // final stretch
+];
+
+// SpikeTrap: [tileRow (top of spike), tileCol]
+const SPIKE_DEFS = [
+  [10, 14], [10, 15], [10, 16],   // gap 1 (landing zone edge)
+  [10, 28], [10, 33],             // gap 2 edges
+  [10, 43], [10, 46],             // gap 3 edges
+  [10, 50], [10, 52],             // final stretch danger spots
+];
+
+// NetTrap: [tileRow, tileCol] – float in the air as hazard zones
+const NET_DEFS = [
+  [9, 13],   // over gap 1
+  [8, 30],   // bridge over gap 2
+  [7, 44],   // bridge over gap 3
+];
+
+// Minions (Jäger-Handlanger): [tileRow of surface, tileCol (start x)]
+const MINION_DEFS = [
+  [10, 38],   // section 3 ground
+  [10, 53],   // final stretch
+];
+
+function buildBeetles() {
+  return BEETLE_DEFS.map(([surfRow, leftCol, rightCol]) => ({
+    x:        leftCol * TILE,
+    y:        surfRow * TILE - BEETLE_H,   // sits on surface
+    w:        BEETLE_W,
+    h:        BEETLE_H,
+    vx:       BEETLE_SPEED,
+    leftBound:  leftCol * TILE,
+    rightBound: (rightCol + 1) * TILE - BEETLE_W,
+    direction:  1,
+    hp:       1,
+    dead:     false,
+  }));
+}
+
+function buildSpikeTraps() {
+  return SPIKE_DEFS.map(([row, col]) => ({
+    x: col * TILE,
+    y: row * TILE,
+    w: SPIKE_W,
+    h: SPIKE_H,
+  }));
+}
+
+function buildNetTraps() {
+  return NET_DEFS.map(([row, col]) => ({
+    x: col * TILE - NET_W / 2,
+    y: row * TILE,
+    w: NET_W,
+    h: NET_H,
+    active:   true,
+    trapTimer: 0,       // > 0 while player is trapped inside
+  }));
+}
+
+function buildMinions() {
+  return MINION_DEFS.map(([surfRow, col]) => ({
+    x:            col * TILE,
+    y:            surfRow * TILE - MINION_H,
+    w:            MINION_W,
+    h:            MINION_H,
+    vx:           0,
+    hp:           2,
+    dead:         false,
+    shootTimer:   MINION_SHOOT_COOLDOWN,
+    facingLeft:   true,   // shoots toward player
+  }));
+}
 
 function buildCoins() {
   return COIN_DEFS.map(([row, col]) => ({
@@ -902,6 +1026,22 @@ function drawHUD() {
   ctx.font = '8px "Press Start 2P", monospace';
   ctx.textAlign = 'right';
   ctx.fillText(`BEST ${bestScore}`, CANVAS_W - 10, 33);
+  ctx.fillText(`BEST ${bestScore}`, CANVAS_W - 10, 22);
+
+  // Level name (top center, below food bar)
+  ctx.fillStyle = 'rgba(255,255,255,0.80)';
+  ctx.font = '5px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('LEVEL 1 – Der Garten', CANVAS_W / 2, 36);
+
+  // Gelbi icon (small yellow budgie) in the top-right corner as rescue reminder
+  const gx = CANVAS_W - 52;
+  const gy = 4;
+  ctx.fillStyle = '#fdd835';
+  ctx.fillRect(gx + 3, gy + 2, 8, 9);  // body
+  ctx.fillRect(gx + 4, gy,     6, 5);  // head
+  ctx.fillStyle = '#111';
+  ctx.fillRect(gx + 7, gy + 1, 2, 2);  // eye
 }
 
 // ─── SCREEN DRAWING ──────────────────────────────────────────────────────────
@@ -971,6 +1111,63 @@ function drawMenuScreen() {
     ctx.fillStyle = '#fdd835';
     ctx.font = '10px "Press Start 2P", monospace';
     ctx.fillText('PRESS  ENTER  TO  START', CANVAS_W / 2, 345);
+  }
+}
+
+function drawIntroScreen() {
+  // Black background
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // ── Cage pixel art ──────────────────────────────────────────────────────────
+  const cageX = CANVAS_W / 2 - 36;
+  const cageY = 60;
+  const cageW = 72;
+  const cageH = 80;
+
+  // Cage bars (grey)
+  ctx.fillStyle = '#aaa';
+  ctx.fillRect(cageX, cageY, cageW, 4);          // top bar
+  ctx.fillRect(cageX, cageY + cageH - 4, cageW, 4); // bottom bar
+  ctx.fillRect(cageX, cageY, 4, cageH);           // left side
+  ctx.fillRect(cageX + cageW - 4, cageY, 4, cageH); // right side
+  // Vertical bars
+  for (let i = 1; i < 5; i++) {
+    ctx.fillRect(cageX + Math.round(i * cageW / 5), cageY + 4, 3, cageH - 8);
+  }
+
+  // Yellow budgie (Gelbi) inside cage
+  ctx.fillStyle = '#fdd835';
+  ctx.fillRect(cageX + cageW / 2 - 10, cageY + cageH / 2 - 10, 20, 22); // body
+  ctx.fillRect(cageX + cageW / 2 - 6,  cageY + cageH / 2 - 20, 14, 14); // head
+  // Eye
+  ctx.fillStyle = '#111';
+  ctx.fillRect(cageX + cageW / 2 + 2, cageY + cageH / 2 - 17, 4, 4);
+
+  // ── Story text ───────────────────────────────────────────────────────────────
+  ctx.fillStyle = '#fff';
+  ctx.font = '9px "Press Start 2P", monospace';
+  ctx.fillText('Dein Freund Gelbi wurde vom', CANVAS_W / 2, 185);
+  ctx.fillText('Jäger gefangen!', CANVAS_W / 2, 208);
+
+  ctx.fillStyle = '#fdd835';
+  ctx.font = '11px "Press Start 2P", monospace';
+  ctx.fillText('Rette ihn!', CANVAS_W / 2, 240);
+
+  // ── Gelbi reminder icon + label ──────────────────────────────────────────────
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '7px "Press Start 2P", monospace';
+  ctx.fillText('Du bist der grüne Wellensittich.', CANVAS_W / 2, 290);
+  ctx.fillText('Erreiche das Jagdhaus am Ende des Waldes!', CANVAS_W / 2, 312);
+
+  // ── ENTER prompt (blinking) ──────────────────────────────────────────────────
+  if (Math.floor(Date.now() / 550) % 2 === 0) {
+    ctx.fillStyle = '#fdd835';
+    ctx.font = '10px "Press Start 2P", monospace';
+    ctx.fillText('PRESS  ENTER  TO  START', CANVAS_W / 2, 370);
   }
 }
 
@@ -1123,6 +1320,9 @@ function loop(timestamp) {
   switch (gameState) {
     case 'menu':
       drawMenuScreen();
+      break;
+    case 'intro':
+      drawIntroScreen();
       break;
     case 'playing':
       update(dt);
