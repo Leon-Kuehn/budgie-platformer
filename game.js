@@ -1,1615 +1,1598 @@
 'use strict';
 
-// ─── CONSTANTS ───────────────────────────────────────────────────────────────
-const CANVAS_W      = 800;
-const CANVAS_H      = 448;   // 14 × 32
-const TILE          = 32;
-let   COLS          = 60;    // updated dynamically per level
-let   COLS          = 60;   // updated per level (L1=60, L2=80)
-const ROWS          = 14;
+const W = 800;
+const H = 448;
+const TILE = 32;
+const ROWS = 14;
+const EDITOR_STORAGE_KEY = 'budgie-phaser-editor-v2';
 
-const GRAVITY       = 900;   // px/s²
-const FLUTTER_GRAV  = 240;   // px/s² while fluttering (reduced gravity)
-const FLUTTER_VMAX  = 80;    // max fall speed while fluttering px/s
-const MOVE_SPEED    = 200;   // px/s horizontal
-const JUMP_VEL      = -520;  // px/s upward impulse
+const MODE_MENU = 'menu';
+const MODE_PLAY = 'play';
+const MODE_EDITOR = 'editor';
+const MODE_WIN = 'win';
+const MODE_GAMEOVER = 'gameover';
 
-const FOOD_DRAIN    = 6;     // food units per second (easy – Level 1)
-const FOOD_COLLECT  = 35;    // food restored per pickup
-const FOOD_MAX      = 100;
-const COIN_SCORE    = 10;
-const COIN_R        = 8;     // coin radius px
-const FOOD_R        = 7;     // food radius px
-
-// ─── ENEMY / TRAP CONSTANTS ──────────────────────────────────────────────────
-const BEETLE_W      = 32;
-const BEETLE_H      = 24;
-const BEETLE_SPEED  = 60;
-const BEETLE_POINTS = 50;
-
-const MINION_W      = 28;
-const MINION_H      = 40;
-const MINION_SPEED  = 40;
-const MINION_POINTS = 150;
-const MINION_SHOOT_COOLDOWN = 2.0;  // seconds between shots
-const PROJ_SPEED    = 200;          // px/s
-
-const SPIKE_W       = 32;
-const SPIKE_H       = 16;
-
-const NET_W         = 40;
-const NET_H         = 40;
-const NET_SLOW_DUR  = 2.0;   // seconds of 50% slowdown after escaping
-const NET_TRAP_DUR  = 1.5;   // seconds trapped before auto-release
-
-const INVINCIBLE_DUR = 1.5;  // seconds of invincibility after taking damage
-const BOUNCE_VEL    = -300;  // upward bounce when stomping an enemy
-const PLAYER_LIVES  = 3;
-
-// ─── CANVAS ──────────────────────────────────────────────────────────────────
-const canvas = document.getElementById('gameCanvas');
-const ctx    = canvas.getContext('2d');
-canvas.width  = CANVAS_W;
-canvas.height = CANVAS_H;
-
-// ─── GAME STATE ──────────────────────────────────────────────────────────────
-let gameState    = 'menu';   // 'menu' | 'playing' | 'gameover' | 'win'
-let currentLevel = 1;        // active level number (1 or 3)
-let gameState          = 'menu';  // 'menu'|'playing'|'transitioning'|'level2'|'gameover'|'win'
-let score              = 0;
-let bestScore          = 0;
-let foodMeter          = FOOD_MAX;
-let player             = null;
-let cameraX            = 0;
-let tileMap            = [];
-let coins              = [];
-let foods              = [];
-let gardenGate         = null;
-let levelCompleteTimer = 0;
-let gameState    = 'menu';   // 'menu' | 'playing' | 'gameover' | 'win'
-let score        = 0;
-let bestScore    = 0;
-let foodMeter    = FOOD_MAX;
-let player       = null;
-let cameraX      = 0;
-let tileMap      = [];
-let coins        = [];
-let foods        = [];
-let birdhouse    = null;
-let enemies      = [];       // Raven enemies (level 3)
-let traps        = [];       // PressureTrap entities (level 3)
-let currentLevel = 1;        // 1 or 2
-let beetles      = [];       // Level 2 enemies
-let spikes       = [];       // Level 2 hazards
-let gameState = 'menu';   // 'menu' | 'intro' | 'playing' | 'gameover' | 'win'
-let score     = 0;
-let bestScore = 0;
-let foodMeter = FOOD_MAX;
-let player    = null;
-let cameraX   = 0;
-let tileMap   = [];
-let coins     = [];
-let foods     = [];
-let birdhouse = null;
-let beetles      = [];
-let spikeTraps   = [];
-let netTraps     = [];
-let minions      = [];
-let projectiles  = [];
-
-// ─── CLOUD DATA (fixed world positions) ──────────────────────────────────────
-const CLOUDS = [
-  { x: 120,  y: 45,  w: 110, h: 38 },
-  { x: 380,  y: 65,  w: 85,  h: 30 },
-  { x: 620,  y: 35,  w: 130, h: 44 },
-  { x: 920,  y: 55,  w: 95,  h: 33 },
-  { x: 1180, y: 40,  w: 115, h: 40 },
-  { x: 1450, y: 70,  w: 90,  h: 32 },
-  { x: 1720, y: 48,  w: 105, h: 36 },
-];
-
-// ─── INPUT ───────────────────────────────────────────────────────────────────
-const keys = new Set();
-
-window.addEventListener('keydown', e => {
-  const wasHeld = keys.has(e.code);
-  keys.add(e.code);
-
-  if (!wasHeld) {
-    switch (gameState) {
-      case 'menu':
-        if (e.code === 'Enter') gameState = 'intro';
-        break;
-      case 'intro':
-        if (e.code === 'Enter') startGame();
-        break;
-      case 'playing':
-        if ((e.code === 'Space' || e.code === 'ArrowUp') && player.onGround) {
-          player.vy = JUMP_VEL;
-          player.onGround = false;
-        }
-        break;
-      case 'transitioning':
-        // skip animation with Enter/Space
-        if (e.code === 'Enter' || e.code === 'Space') levelCompleteTimer = 999;
-        break;
-      case 'level2':
-      case 'gameover':
-      case 'win':
-        if (e.code === 'KeyR') startGame();
-        break;
-    }
-  }
-
-  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) {
-    e.preventDefault();
-  }
-});
-
-window.addEventListener('keyup', e => keys.delete(e.code));
-
-// ─── LEVEL BUILDING ──────────────────────────────────────────────────────────
-function buildTileMap() {
-  return currentLevel === 3 ? buildLevel3TileMap() : buildLevel1TileMap();
+function toDataUri(svg) {
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-function buildLevel1TileMap() {
-  const map = Array.from({ length: ROWS }, () => new Array(COLS).fill(0));
+function makeSvgLibrary() {
+  const mk = (w, h, body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${body}</svg>`;
 
-  function fill(r1, c1, r2, c2) {
-    for (let r = r1; r <= r2; r++)
-      for (let c = c1; c <= c2; c++)
-        if (r >= 0 && r < ROWS && c >= 0 && c < COLS)
-          map[r][c] = 1;
-  }
-
-  // ── Ground (3 tiles deep, rows 11–13) ──
-  // Start section: cols 0–21
-  fill(11,  0, 13, 21);
-  // One large gap: cols 22–30 (9 tiles = 288 px → scary but bridgeable)
-  // End section: cols 31–59
-  fill(11, 31, 13, 59);
-
-  // ── Platform group 1 – start area (low, easy) ──
-  fill(8,  5,  8, 11);   // 7 tiles wide, row 8
-
-  // ── Platform group 2 – approach + bridge over gap ──
-  fill(7, 14,  7, 19);   // approach ledge, row 7, 6 tiles
-  fill(7, 22,  7, 29);   // bridge directly over the gap, row 7, 8 tiles
-
-  // ── Platform group 3 – mid section ──
-  fill(7, 37,  7, 43);   // 7 tiles wide, row 7
-
-  // ── Platform group 4 – near gate (slightly higher) ──
-  fill(6, 50,  6, 56);   // 7 tiles wide, row 6
-
-  return map;
-}
-
-// ─── LEVEL 2 TILE MAP (80 cols) ──────────────────────────────────────────────
-const COLS_L2 = 80;
-
-function buildLevel2TileMap() {
-  const map = Array.from({ length: ROWS }, () => new Array(COLS_L2).fill(0));
-
-  function fill(r1, c1, r2, c2) {
-    for (let r = r1; r <= r2; r++)
-      for (let c = c1; c <= c2; c++)
-        if (r >= 0 && r < ROWS && c >= 0 && c < COLS_L2)
-          map[r][c] = 1;
-  }
-
-  // Ground sections (3 tiles deep, rows 11–13), with three gaps
-  fill(11,  0, 13, 14);   // start ground          (cols  0–14)
-  // gap: cols 15–18
-  fill(11, 19, 13, 36);   // section 2             (cols 19–36)
-  // gap: cols 37–41
-  fill(11, 42, 13, 57);   // section 3             (cols 42–57)
-  // gap: cols 58–62
-  fill(11, 63, 13, 79);   // final stretch         (cols 63–79)
-
-  // Floating platforms
-  fill(8,  3,  8,  7);    // group 1: start mid
-  fill(7,  8,  7, 13);    // group 2: start high / bridge over gap 1
-  fill(9, 15,  9, 18);    // group 3: bridge over gap 1
-  fill(6, 22,  6, 27);    // group 4: section 2 high
-  fill(9, 28,  9, 33);    // group 5: section 2 mid
-  fill(8, 37,  8, 41);    // group 6: bridge over gap 2
-  fill(7, 45,  7, 50);    // group 7: section 3 mid
-  fill(5, 52,  5, 57);    // group 8: section 3 high
-  fill(8, 58,  8, 62);    // group 9: bridge over gap 3
-  fill(7, 66,  7, 70);    // group 10: final mid
-  fill(6, 73,  6, 78);    // group 11: near exit
-
-  return map;
-}
-
-function buildLevel3TileMap() {
-  const map = Array.from({ length: ROWS }, () => new Array(COLS).fill(0));
-
-  function fill(r1, c1, r2, c2) {
-    for (let r = r1; r <= r2; r++)
-      for (let c = c1; c <= c2; c++)
-        if (r >= 0 && r < ROWS && c >= 0 && c < COLS)
-          map[r][c] = 1;
-  }
-
-  // Ground sections (3 tiles deep, rows 11–13), with four gaps
-  fill(11,  0, 13,  8);   // start ground       (cols  0–8)
-  // gap: cols 9–14
-  fill(11, 15, 13, 24);   // section 2          (cols 15–24)
-  // gap: cols 25–29
-  fill(11, 30, 13, 40);   // section 3          (cols 30–40)
-  // gap: cols 41–46
-  fill(11, 47, 13, 57);   // section 4          (cols 47–57)
-  // gap: cols 58–62
-  fill(11, 63, 13, 99);   // final stretch      (cols 63–99)
-
-  // Row 9 bridges (low platforms over gaps)
-  fill(9,  10, 9, 13);    // bridge gap 1
-  fill(9,  26, 9, 28);    // bridge gap 2
-  fill(9,  42, 9, 45);    // bridge gap 3
-  fill(9,  59, 9, 61);    // bridge gap 4
-
-  // Row 7 platforms (mid height) – 3 height levels total
-  fill(7,   4, 7,  7);    // start area
-  fill(7,  17, 7, 20);    // section 2
-  fill(7,  32, 7, 35);    // section 3
-  fill(7,  48, 7, 52);    // section 4
-  fill(7,  65, 7, 69);    // final zone A
-  fill(7,  78, 7, 81);    // final zone B
-  fill(7,  88, 7, 91);    // final zone C
-
-  // Row 5 platforms (high)
-  fill(5,   2, 5,  4);    // start high
-  fill(5,  12, 5, 15);    // section 2 high
-  fill(5,  22, 5, 26);    // mid section high
-  fill(5,  37, 5, 40);    // section 3 high
-  fill(5,  53, 5, 57);    // section 4 high
-  fill(5,  70, 5, 74);    // final high A
-  fill(5,  83, 5, 87);    // final high B
-  fill(5,  92, 5, 96);    // near jagdhaus
-
-  return map;
-}
-
-// ─── ENTITY DEFINITIONS ──────────────────────────────────────────────────────
-// Each entry is [tileRow, tileCol]; entity is centred inside that tile cell.
-const COIN_DEFS = [
-  // Start ground (row 11 → coins at row 10)
-  [10,  3], [10,  8], [10, 16],
-  // Platform group 1 (row 8 → coins at row 7)
-  [7,  6],  [7,  9],
-  // Gap bridge (row 7 → coins at row 6)
-  [6, 23],  [6, 26],  [6, 29],
-  // End section ground (row 11 → coins at row 10)
-  [10, 33], [10, 44],
-  // Platform group 3 (row 7 → coins at row 6)
-  [6, 38],  [6, 42],
-  // Platform group 4 (row 6 → coins at row 5)
-  [5, 51],  [5, 55],
-  // Near gate
-  [10, 57],
-];
-
-const FOOD_DEFS = [
-  [10, 11],   // start area
-  [10, 20],   // just before the gap
-  [10, 40],   // mid section
-  [10, 56],   // near gate
-];
-
-// ─── ENEMY / TRAP DEFINITIONS ────────────────────────────────────────────────
-// Beetles: [tileRow of surface, leftCol, rightCol] – patrol between left & right col x-coords
-const BEETLE_DEFS = [
-  [10,  5, 11],   // start ground
-  [10, 19, 26],   // section 2 ground
-  [8,  23, 25],   // section 2 mid-platform  (row 9 → surface row 8)
-  [10, 34, 41],   // section 3 ground
-  [6,  35, 37],   // section 3 mid-platform  (row 7 → surface row 6)
-  [10, 47, 55],   // final stretch
-];
-
-// SpikeTrap: [tileRow (top of spike), tileCol]
-const SPIKE_DEFS = [
-  [10, 14], [10, 15], [10, 16],   // gap 1 (landing zone edge)
-  [10, 28], [10, 33],             // gap 2 edges
-  [10, 43], [10, 46],             // gap 3 edges
-  [10, 50], [10, 52],             // final stretch danger spots
-];
-
-// NetTrap: [tileRow, tileCol] – float in the air as hazard zones
-const NET_DEFS = [
-  [9, 13],   // over gap 1
-  [8, 30],   // bridge over gap 2
-  [7, 44],   // bridge over gap 3
-];
-
-// Minions (Jäger-Handlanger): [tileRow of surface, tileCol (start x)]
-const MINION_DEFS = [
-  [10, 38],   // section 3 ground
-  [10, 53],   // final stretch
-];
-
-// ─── LEVEL 3 ENTITY DEFINITIONS ──────────────────────────────────────────────
-const LEVEL3_COIN_DEFS = [
-  // Section 1 ground (cols 0–8)
-  [10,  3], [10,  6],
-  // Bridge gap 1 (row 9)
-  [8,  11], [8,  12],
-  // Section 2 ground (cols 15–24)
-  [10, 17], [10, 21],
-  // Row 7 mid platform
-  [6,   5], [6,  18],
-  // Bridge gap 2 (row 9)
-  [8,  27],
-  // Section 3 ground (cols 30–40)
-  [10, 32], [10, 37],
-  // Row 5 high platform
-  [4,  13], [4,  23],
-  // Bridge gap 3 (row 9)
-  [8,  43], [8,  44],
-  // Section 4 ground (cols 47–57)
-  [10, 50], [10, 55],
-  // Row 7 platform
-  [6,  33], [6,  49],
-  // Bridge gap 4 (row 9)
-  [8,  60],
-  // Final stretch (cols 63–99)
-  [10, 66], [10, 73], [10, 79], [10, 86],
-  // High platforms in final zone
-  [4,  38], [4,  71], [4,  84],
-];
-
-const LEVEL3_FOOD_DEFS = [
-  [10,  7],   // start area
-  [8,  27],   // bridge gap 2
-  [10, 54],   // section 4 ground
-  [10, 88],   // final stretch
-];
-function buildBeetles() {
-  return BEETLE_DEFS.map(([surfRow, leftCol, rightCol]) => ({
-    x:        leftCol * TILE,
-    y:        surfRow * TILE - BEETLE_H,   // sits on surface
-    w:        BEETLE_W,
-    h:        BEETLE_H,
-    vx:       BEETLE_SPEED,
-    leftBound:  leftCol * TILE,
-    rightBound: (rightCol + 1) * TILE - BEETLE_W,
-    direction:  1,
-    hp:       1,
-    dead:     false,
-  }));
-}
-
-function buildSpikeTraps() {
-  return SPIKE_DEFS.map(([row, col]) => ({
-    x: col * TILE,
-    y: row * TILE,
-    w: SPIKE_W,
-    h: SPIKE_H,
-  }));
-}
-
-function buildNetTraps() {
-  return NET_DEFS.map(([row, col]) => ({
-    x: col * TILE - NET_W / 2,
-    y: row * TILE,
-    w: NET_W,
-    h: NET_H,
-    active:   true,
-    trapTimer: 0,       // > 0 while player is trapped inside
-  }));
-}
-
-function buildMinions() {
-  return MINION_DEFS.map(([surfRow, col]) => ({
-    x:            col * TILE,
-    y:            surfRow * TILE - MINION_H,
-    w:            MINION_W,
-    h:            MINION_H,
-    vx:           0,
-    hp:           2,
-    dead:         false,
-    shootTimer:   MINION_SHOOT_COOLDOWN,
-    facingLeft:   true,   // shoots toward player
-  }));
-}
-
-function buildCoins() {
-  const defs = currentLevel === 3 ? LEVEL3_COIN_DEFS : COIN_DEFS;
-  return defs.map(([row, col]) => ({
-    x: col * TILE + TILE / 2,
-    y: row * TILE + TILE / 2,
-    collected: false,
-  }));
-}
-
-function buildFoods() {
-  const defs = currentLevel === 3 ? LEVEL3_FOOD_DEFS : FOOD_DEFS;
-  return defs.map(([row, col]) => ({
-    x: col * TILE + TILE / 2,
-    y: row * TILE + TILE / 2,
-    collected: false,
-  }));
-}
-
-// ─── LEVEL 2 ENTITY DEFINITIONS ──────────────────────────────────────────────
-// Ground tile top = row 11 → y = 11 * 32 = 352;  entity sits on top: y = 352 - entityH
-const GROUND_TOP_L2 = 11 * TILE;   // 352
-
-const COIN_DEFS_L2 = [
-  // Start section ground (row 10)
-  [10,  3], [10,  7], [10, 12],
-  // Start platform row 8 (coins at row 7)
-  [7,   4], [7,   6],
-  // High platform row 7 (coins at row 6)
-  [6,  10], [6,  12],
-  // Bridge row 9 (coins at row 8)
-  [8,  16], [8,  17],
-  // Section 2 ground
-  [10, 22], [10, 30],
-  // Section 2 high platform (row 6 → row 5)
-  [5,  23], [5,  26],
-  // Section 2 mid platform (row 9 → row 8)
-  [8,  29], [8,  32],
-  // Bridge over gap 2 (row 8 → row 7)
-  [7,  38], [7,  40],
-  // Section 3 ground
-  [10, 48], [10, 54],
-  // Final section
-  [10, 68], [10, 75],
-];
-
-const FOOD_DEFS_L2 = [
-  [10,  8],   // start section
-  [8,  16],   // bridge over gap 1
-  [10, 32],   // section 2 ground
-  [8,  60],   // bridge over gap 3
-  [10, 72],   // final section
-];
-
-// Spikes: { x, y, w, h } — placed on top of ground tiles
-function buildSpikes() {
-  const h = 16;
-  return [
-    { x: 10 * TILE,      y: GROUND_TOP_L2 - h, w: TILE, h },  // start section
-    { x: 24 * TILE,      y: GROUND_TOP_L2 - h, w: TILE, h },  // section 2
-    { x: 34 * TILE,      y: GROUND_TOP_L2 - h, w: TILE, h },  // section 2 near gap
-    { x: 48 * TILE,      y: GROUND_TOP_L2 - h, w: TILE, h },  // section 3
-    { x: 67 * TILE,      y: GROUND_TOP_L2 - h, w: TILE, h },  // final section
-  ];
-}
-
-// Beetles: { x, y, w, h, speed, dir, leftBound, rightBound, defeated }
-function buildBeetles() {
-  const h = 16;
-  const w = 24;
-  return [
-    // Patrol on section 2 ground (cols 19–36)
-    { x: 20 * TILE, y: GROUND_TOP_L2 - h, w, h, speed: 60, dir:  1,
-      leftBound:  19 * TILE, rightBound: 36 * TILE - w, defeated: false },
-    // Patrol on section 2 mid platform (row 9, cols 28–33)
-    { x: 29 * TILE, y: 9 * TILE - h,      w, h, speed: 70, dir: -1,
-      leftBound:  28 * TILE, rightBound: 33 * TILE - w, defeated: false },
-    // Patrol on section 3 ground (cols 42–57)
-    { x: 44 * TILE, y: GROUND_TOP_L2 - h, w, h, speed: 80, dir:  1,
-      leftBound:  42 * TILE, rightBound: 57 * TILE - w, defeated: false },
-    // Patrol on final-mid platform (row 7, cols 66–70)
-    { x: 67 * TILE, y: 7 * TILE - h,      w, h, speed: 65, dir: -1,
-      leftBound:  66 * TILE, rightBound: 70 * TILE - w, defeated: false },
-  ];
-}
-
-function buildCoinsL2() {
-  return COIN_DEFS_L2.map(([row, col]) => ({
-    x: col * TILE + TILE / 2,
-    y: row * TILE + TILE / 2,
-    collected: false,
-  }));
-}
-
-function buildFoodsL2() {
-  return FOOD_DEFS_L2.map(([row, col]) => ({
-    x: col * TILE + TILE / 2,
-    y: row * TILE + TILE / 2,
-    collected: false,
-  }));
-}
-
-// ─── PLAYER ──────────────────────────────────────────────────────────────────
-function createPlayer() {
   return {
-    x: 2 * TILE,
-    y: 8 * TILE,   // will fall onto ground on first frame
-    w: 22,
-    h: 26,
-    vx: 0,
-    vy: 0,
-    onGround: false,
-    facing: 1,       // 1 = right, -1 = left
+    player0: mk(26, 30,
+      '<ellipse cx="8" cy="16" rx="6" ry="8" fill="#2e7d32"/>' +
+      '<ellipse cx="18" cy="16" rx="6" ry="8" fill="#2e7d32"/>' +
+      '<rect x="6" y="7" width="14" height="21" rx="5" fill="#44a64f"/>' +
+      '<rect x="7" y="2" width="12" height="11" rx="6" fill="#7ccf77"/>' +
+      '<rect x="14" y="6" width="3" height="3" rx="1" fill="#111"/>' +
+      '<polygon points="19,10 26,12 19,14" fill="#ffd54f"/>'),
+    player1: mk(26, 30,
+      '<ellipse cx="7" cy="14" rx="7" ry="10" fill="#2e7d32"/>' +
+      '<ellipse cx="19" cy="14" rx="7" ry="10" fill="#2e7d32"/>' +
+      '<rect x="6" y="7" width="14" height="21" rx="5" fill="#44a64f"/>' +
+      '<rect x="7" y="2" width="12" height="11" rx="6" fill="#7ccf77"/>' +
+      '<rect x="14" y="6" width="3" height="3" rx="1" fill="#111"/>' +
+      '<polygon points="19,10 26,12 19,14" fill="#ffd54f"/>'),
+    coin0: mk(20, 20,
+      '<circle cx="10" cy="10" r="8" fill="#fdd835"/>' +
+      '<circle cx="8" cy="8" r="3" fill="#fff59d"/>' +
+      '<circle cx="10" cy="10" r="7" fill="none" stroke="#f9a825" stroke-width="1.5"/>'),
+    coin1: mk(20, 20,
+      '<ellipse cx="10" cy="10" rx="7" ry="8" fill="#fdd835"/>' +
+      '<ellipse cx="8" cy="8" rx="3" ry="2.5" fill="#fff59d"/>' +
+      '<ellipse cx="10" cy="10" rx="6" ry="7" fill="none" stroke="#f9a825" stroke-width="1.5"/>'),
+    food0: mk(20, 20,
+      '<ellipse cx="10" cy="10" rx="8" ry="6.4" fill="#ff7043"/>' +
+      '<ellipse cx="7" cy="7.5" rx="2.4" ry="2" fill="#ffab91"/>'),
+    food1: mk(20, 20,
+      '<ellipse cx="10" cy="10" rx="8" ry="6.8" fill="#ff7043"/>' +
+      '<ellipse cx="7" cy="7.5" rx="2.6" ry="2.1" fill="#ffab91"/>'),
+    rescue0: mk(20, 20,
+      '<polygon points="10,1 13,7 19,8 14,12 16,19 10,15 4,19 6,12 1,8 7,7" fill="#fff176" stroke="#fbc02d" stroke-width="1.2"/>'),
+    rescue1: mk(20, 20,
+      '<polygon points="10,2 13,7 18,8 14,12 15,18 10,15 5,18 6,12 2,8 7,7" fill="#fff59d" stroke="#fbc02d" stroke-width="1.2"/>'),
+    beetle0: mk(30, 20,
+      '<rect x="2" y="4" width="26" height="14" rx="7" fill="#7f1d1d"/>' +
+      '<rect x="5" y="5" width="18" height="4" rx="2" fill="#b71c1c"/>'),
+    beetle1: mk(30, 20,
+      '<rect x="2" y="4" width="26" height="14" rx="7" fill="#7f1d1d"/>' +
+      '<rect x="6" y="5" width="16" height="4" rx="2" fill="#c62828"/>'),
+    raven0: mk(34, 24,
+      '<ellipse cx="17" cy="13" rx="10" ry="7" fill="#1f1f24"/>' +
+      '<polygon points="8,14 0,10 2,16" fill="#2c2c32"/>' +
+      '<polygon points="26,14 34,10 32,16" fill="#2c2c32"/>' +
+      '<circle cx="22" cy="12" r="1.8" fill="#e0e0e0"/>'),
+    raven1: mk(34, 24,
+      '<ellipse cx="17" cy="13" rx="10" ry="7" fill="#1f1f24"/>' +
+      '<polygon points="8,15 0,13 2,17" fill="#2c2c32"/>' +
+      '<polygon points="26,15 34,13 32,17" fill="#2c2c32"/>' +
+      '<circle cx="22" cy="12" r="1.8" fill="#e0e0e0"/>'),
+    minion0: mk(30, 40,
+      '<rect x="4" y="8" width="22" height="30" rx="4" fill="#4e342e"/>' +
+      '<rect x="7" y="2" width="16" height="14" rx="4" fill="#6d4c41"/>' +
+      '<rect x="13" y="9" width="4" height="4" rx="1" fill="#111"/>'),
+    minion1: mk(30, 40,
+      '<rect x="4" y="8" width="22" height="30" rx="4" fill="#4e342e"/>' +
+      '<rect x="7" y="2" width="16" height="14" rx="4" fill="#7a544a"/>' +
+      '<rect x="13" y="9" width="4" height="4" rx="1" fill="#111"/>'),
+    projectile0: mk(12, 8,
+      '<rect x="1" y="1" width="10" height="6" rx="2" fill="#ffcc80"/>' +
+      '<rect x="3" y="2" width="6" height="4" rx="1" fill="#ff8a65"/>'),
+    projectile1: mk(12, 8,
+      '<rect x="1" y="1" width="10" height="6" rx="2" fill="#ffd180"/>' +
+      '<rect x="3" y="2" width="6" height="4" rx="1" fill="#ff7043"/>'),
+    spike0: mk(32, 16,
+      '<polygon points="0,16 16,0 32,16" fill="#8d8d8d"/>' +
+      '<polygon points="4,16 16,3 19,3 7,16" fill="#c2c2c2"/>'),
+    spike1: mk(32, 16,
+      '<polygon points="0,16 16,0 32,16" fill="#9e9e9e"/>' +
+      '<polygon points="4,16 16,4 19,4 7,16" fill="#d4d4d4"/>'),
+    net0: mk(40, 40,
+      '<rect width="40" height="40" fill="none" stroke="#d0d0d0" stroke-width="1.2"/>' +
+      '<path d="M10 0V40M20 0V40M30 0V40M0 10H40M0 20H40M0 30H40" stroke="#d0d0d0" stroke-width="1"/>'),
+    net1: mk(40, 40,
+      '<rect width="40" height="40" fill="none" stroke="#e0e0e0" stroke-width="1.2"/>' +
+      '<path d="M10 0V40M20 0V40M30 0V40M0 10H40M0 20H40M0 30H40" stroke="#e0e0e0" stroke-width="1"/>'),
+    pressure0: mk(48, 12,
+      '<rect x="0" y="4" width="48" height="8" rx="2" fill="#7b5e3b"/>' +
+      '<rect x="2" y="2" width="44" height="4" rx="2" fill="#8d6e45"/>'),
+    pressure1: mk(48, 12,
+      '<rect x="0" y="4" width="48" height="8" rx="2" fill="#fbc02d"/>' +
+      '<rect x="2" y="2" width="44" height="4" rx="2" fill="#ffe082"/>'),
+    pressure2: mk(48, 12,
+      '<rect x="0" y="4" width="48" height="8" rx="2" fill="#ef5350"/>' +
+      '<rect x="2" y="2" width="44" height="4" rx="2" fill="#ffcdd2"/>'),
+    gate: mk(64, 84,
+      '<rect x="0" y="0" width="64" height="16" fill="#1b5e20"/>' +
+      '<rect x="0" y="0" width="10" height="84" fill="#1b5e20"/>' +
+      '<rect x="54" y="0" width="10" height="84" fill="#1b5e20"/>' +
+      '<rect x="10" y="18" width="44" height="64" fill="#2e7d32"/>' +
+      '<polygon points="28,44 40,50 28,56" fill="#fdd835"/>'),
+    forestDoor: mk(64, 84,
+      '<rect x="0" y="0" width="64" height="84" rx="4" fill="#4e342e"/>' +
+      '<rect x="5" y="5" width="54" height="74" rx="3" fill="#795548"/>' +
+      '<rect x="12" y="18" width="40" height="56" rx="2" fill="#263238"/>'),
+    houseDoor: mk(64, 84,
+      '<rect x="0" y="0" width="64" height="84" rx="4" fill="#3e2d23"/>' +
+      '<rect x="5" y="5" width="54" height="74" rx="3" fill="#5d4037"/>' +
+      '<rect x="12" y="20" width="40" height="50" rx="2" fill="#1f1a17"/>' +
+      '<circle cx="33" cy="45" r="4" fill="#fbc02d"/>'),
+    tileGround: mk(32, 32,
+      '<rect width="32" height="32" fill="#6c4a2e"/>' +
+      '<rect y="0" width="32" height="7" fill="#3f7d47"/>' +
+      '<rect y="30" width="32" height="2" fill="#4a2d19"/>'),
+    tilePlatform: mk(32, 32,
+      '<rect width="32" height="32" fill="#7a5230"/>' +
+      '<rect y="0" width="32" height="3" fill="#8b6340"/>' +
+      '<rect y="6" width="32" height="2" fill="#8b6340"/>' +
+      '<rect y="29" width="32" height="3" fill="#6b4423"/>')
   };
 }
 
-// ─── ENEMY & TRAP BUILDERS ───────────────────────────────────────────────────
-function buildEnemies() {
-  if (currentLevel === 3) {
-    return [
-      { type: 'raven', x:  5*TILE, y: 7*TILE-22, w: 28, h: 20, vx:  90, color: '#222222', wingPhase: 0.0,
-        patrolLeft:  2*TILE, patrolRight: 10*TILE },
-      { type: 'raven', x: 17*TILE, y: 5*TILE-22, w: 28, h: 20, vx: -80, color: '#1a1a1a', wingPhase: 1.2,
-        patrolLeft: 14*TILE, patrolRight: 24*TILE },
-      { type: 'raven', x: 34*TILE, y: 6*TILE-22, w: 28, h: 20, vx: 100, color: '#222222', wingPhase: 2.5,
-        patrolLeft: 30*TILE, patrolRight: 43*TILE },
-      { type: 'raven', x: 50*TILE, y: 7*TILE-22, w: 28, h: 20, vx: -90, color: '#1a1a1a', wingPhase: 0.8,
-        patrolLeft: 46*TILE, patrolRight: 58*TILE },
-      { type: 'raven', x: 72*TILE, y: 5*TILE-22, w: 28, h: 20, vx:  85, color: '#222222', wingPhase: 3.1,
-        patrolLeft: 66*TILE, patrolRight: 82*TILE },
-    ];
-  }
-  return [];
+function deepClone(obj) {
+  return JSON.parse(JSON.stringify(obj));
 }
 
-function buildTraps() {
-  if (currentLevel === 3) {
-    const py = 11 * TILE - 8; // plate top (sits on top of ground)
-    return [
-      { type: 'pressure', x: 18*TILE + 8, y: py, w: 48, h: 8, state: 'idle', timer: 0 },
-      { type: 'pressure', x: 33*TILE + 8, y: py, w: 48, h: 8, state: 'idle', timer: 0 },
-      { type: 'pressure', x: 50*TILE + 8, y: py, w: 48, h: 8, state: 'idle', timer: 0 },
-      { type: 'pressure', x: 70*TILE + 8, y: py, w: 48, h: 8, state: 'idle', timer: 0 },
-    ];
-  }
-  return [];
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
 }
 
-function buildGoal() {
-  if (currentLevel === 3) {
-    // Hunting-house door at end of level 3
-    return { x: 95 * TILE, y: 11 * TILE - 80, w: 64, h: 80 };
-  }
-  // Level 1: birdhouse sits on top of ground row 11
-  return { x: 57 * TILE, y: 11 * TILE - 64, w: 64, h: 64 };
+function makeArrayLevel(cols) {
+  return Array.from({ length: ROWS }, () => new Array(cols).fill(0));
 }
 
-// ─── START / RESET ───────────────────────────────────────────────────────────
-function startLevel(level) {
-  currentLevel = level;
-  COLS         = (level === 3) ? 100 : 60;
-  gameState    = 'playing';
-  cameraX      = 0;
-  foodMeter    = FOOD_MAX;
-  tileMap      = buildTileMap();
-  player       = createPlayer();
-  coins        = buildCoins();
-  foods        = buildFoods();
-  enemies      = buildEnemies();
-  traps        = buildTraps();
-  birdhouse    = buildGoal();
-}
-
-function startGame() {
-  score = 0;
-  startLevel(1);
-  score              = 0;
-  foodMeter          = FOOD_MAX;
-  gameState          = 'playing';
-  cameraX            = 0;
-  levelCompleteTimer = 0;
-  tileMap            = buildTileMap();
-  player             = createPlayer();
-  coins              = buildCoins();
-  foods              = buildFoods();
-  // Garden gate sits on top of ground row 11 (y = 11*TILE = 352), 80 px tall, 2 tiles wide
-  gardenGate = { x: 57 * TILE, y: 11 * TILE - 80, w: 64, h: 80 };
-  score        = 0;
-  currentLevel = 1;
-  initLevel();
-}
-
-/** Initialise (or re-initialise) the current level without resetting the score. */
-function initLevel() {
-  foodMeter = FOOD_MAX;
-  gameState = 'playing';
-  cameraX   = 0;
-  player    = createPlayer();
-
-  if (currentLevel === 1) {
-    COLS      = 60;
-    tileMap   = buildTileMap();
-    coins     = buildCoins();
-    foods     = buildFoods();
-    beetles   = [];
-    spikes    = [];
-    // Birdhouse sits on top of ground row 11 (y = 11*TILE = 352), 64 px tall
-    birdhouse = { x: 57 * TILE, y: 11 * TILE - 64, w: 64, h: 64 };
-  } else {
-    COLS      = COLS_L2;
-    tileMap   = buildLevel2TileMap();
-    coins     = buildCoinsL2();
-    foods     = buildFoodsL2();
-    beetles   = buildBeetles();
-    spikes    = buildSpikes();
-    // Wooden gate at end of Level 2
-    birdhouse = { x: 76 * TILE, y: 11 * TILE - 64, w: 64, h: 64 };
-  }
-}
-
-// ─── COLLISION HELPERS ───────────────────────────────────────────────────────
-function isSolid(r, c) {
-  if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return false;
-  return tileMap[r][c] === 1;
-}
-
-/** Push player out of solid tiles along the X axis after horizontal movement. */
-function resolveX() {
-  // Nothing to resolve if not moving horizontally
-  if (player.vx === 0) return;
-
-  const r1 = Math.max(0,      Math.floor(player.y            / TILE));
-  // Use h-1 so that standing exactly on ground (player bottom = tile top) does NOT
-  // include the ground row in the horizontal check — prevents false wall pushes.
-  const r2 = Math.min(ROWS-1, Math.floor((player.y + player.h - 1) / TILE));
-  const c1 = Math.floor(player.x            / TILE);
-  const c2 = Math.min(COLS-1, Math.floor((player.x + player.w - 1) / TILE));
-
+function fillRect(tiles, r1, c1, r2, c2) {
+  const cols = tiles[0].length;
   for (let r = r1; r <= r2; r++) {
     for (let c = c1; c <= c2; c++) {
-      if (!isSolid(r, c)) continue;
-      const tx = c * TILE;
-      if (player.vx >= 0) {
-        player.x = tx - player.w;
-      } else {
-        player.x = tx + TILE;
+      if (r >= 0 && r < ROWS && c >= 0 && c < cols) tiles[r][c] = 1;
+    }
+  }
+}
+
+function defaultEditorLevel() {
+  const cols = 90;
+  const tiles = makeArrayLevel(cols);
+  fillRect(tiles, 11, 0, 13, cols - 1);
+  return {
+    key: 'custom',
+    name: 'Custom Level',
+    objective: 'Erreiche das Ziel.',
+    theme: 'garden',
+    cols,
+    lockGoal: false,
+    spawn: { row: 8, col: 2 },
+    goal: { row: 10, col: cols - 6, w: 64, h: 80, label: 'Ziel' },
+    tiles,
+    coins: [],
+    foods: [],
+    rescueTokens: [],
+    spikes: [],
+    nets: [],
+    pressures: [],
+    beetles: [],
+    ravens: [],
+    minions: []
+  };
+}
+
+function normalizeLevel(raw) {
+  const base = defaultEditorLevel();
+  if (!raw || typeof raw !== 'object') return base;
+
+  base.name = typeof raw.name === 'string' && raw.name ? raw.name : base.name;
+  base.objective = typeof raw.objective === 'string' && raw.objective ? raw.objective : base.objective;
+  base.theme = ['garden', 'forest', 'hunting'].includes(raw.theme) ? raw.theme : base.theme;
+  base.cols = Number.isInteger(raw.cols) ? clamp(raw.cols, 30, 250) : base.cols;
+  base.lockGoal = !!raw.lockGoal;
+  base.tiles = makeArrayLevel(base.cols);
+
+  if (Array.isArray(raw.tiles) && raw.tiles.length === ROWS) {
+    for (let r = 0; r < ROWS; r++) {
+      if (!Array.isArray(raw.tiles[r])) continue;
+      for (let c = 0; c < Math.min(base.cols, raw.tiles[r].length); c++) {
+        base.tiles[r][c] = raw.tiles[r][c] ? 1 : 0;
       }
-      player.vx = 0;
     }
   }
+
+  const pairList = (arr) => {
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    for (const it of arr) {
+      if (!Array.isArray(it) || it.length < 2) continue;
+      out.push([clamp(Math.floor(it[0]), 0, ROWS - 1), clamp(Math.floor(it[1]), 0, base.cols - 1)]);
+    }
+    return out;
+  };
+
+  base.coins = pairList(raw.coins);
+  base.foods = pairList(raw.foods);
+  base.rescueTokens = pairList(raw.rescueTokens);
+  base.spikes = pairList(raw.spikes);
+  base.nets = pairList(raw.nets);
+
+  base.pressures = Array.isArray(raw.pressures)
+    ? raw.pressures.map((v) => clamp(Math.floor(v), 0, base.cols - 1))
+      .filter((v, i, a) => a.indexOf(v) === i)
+    : [];
+
+  base.beetles = Array.isArray(raw.beetles)
+    ? raw.beetles.filter((v) => Array.isArray(v) && v.length >= 3).map((v) => {
+      const row = clamp(Math.floor(v[0]), 0, ROWS - 1);
+      const left = clamp(Math.floor(v[1]), 0, base.cols - 1);
+      const right = clamp(Math.floor(v[2]), left, base.cols - 1);
+      const speed = typeof v[3] === 'number' ? clamp(v[3], 20, 240) : 70;
+      return [row, left, right, speed];
+    }) : [];
+
+  base.ravens = Array.isArray(raw.ravens)
+    ? raw.ravens.filter((v) => Array.isArray(v) && v.length >= 3).map((v) => {
+      const row = clamp(Math.floor(v[0]), 0, ROWS - 1);
+      const left = clamp(Math.floor(v[1]), 0, base.cols - 1);
+      const right = clamp(Math.floor(v[2]), left, base.cols - 1);
+      const speed = typeof v[3] === 'number' ? clamp(v[3], 20, 260) : 80;
+      const amp = typeof v[4] === 'number' ? clamp(v[4], 4, 36) : 14;
+      return [row, left, right, speed, amp];
+    }) : [];
+
+  base.minions = Array.isArray(raw.minions)
+    ? raw.minions.filter((v) => Array.isArray(v) && v.length >= 2).map((v) => {
+      const row = clamp(Math.floor(v[0]), 0, ROWS - 1);
+      const col = clamp(Math.floor(v[1]), 0, base.cols - 1);
+      const patrol = typeof v[2] === 'number' ? clamp(Math.floor(v[2]), 1, 8) : 2;
+      const shootCd = typeof v[3] === 'number' ? clamp(v[3], 0.4, 6) : 2;
+      const hp = typeof v[4] === 'number' ? clamp(Math.floor(v[4]), 1, 8) : 2;
+      const projSpeed = typeof v[5] === 'number' ? clamp(v[5], 100, 420) : 200;
+      return [row, col, patrol, shootCd, hp, projSpeed];
+    }) : [];
+
+  base.spawn = {
+    row: raw.spawn && Number.isFinite(raw.spawn.row) ? clamp(Math.floor(raw.spawn.row), 0, ROWS - 1) : base.spawn.row,
+    col: raw.spawn && Number.isFinite(raw.spawn.col) ? clamp(Math.floor(raw.spawn.col), 0, base.cols - 1) : base.spawn.col
+  };
+
+  base.goal = {
+    row: raw.goal && Number.isFinite(raw.goal.row) ? clamp(Math.floor(raw.goal.row), 0, ROWS - 1) : base.goal.row,
+    col: raw.goal && Number.isFinite(raw.goal.col) ? clamp(Math.floor(raw.goal.col), 0, base.cols - 1) : base.goal.col,
+    w: raw.goal && Number.isFinite(raw.goal.w) ? clamp(Math.floor(raw.goal.w), 32, 160) : base.goal.w,
+    h: raw.goal && Number.isFinite(raw.goal.h) ? clamp(Math.floor(raw.goal.h), 48, 160) : base.goal.h,
+    label: raw.goal && typeof raw.goal.label === 'string' && raw.goal.label ? raw.goal.label : base.goal.label
+  };
+
+  return base;
 }
 
-/** Push player out of solid tiles along the Y axis after vertical movement. */
-function resolveY() {
-  const c1 = Math.max(0,      Math.floor(player.x            / TILE));
-  const c2 = Math.min(COLS-1, Math.floor((player.x + player.w - 1) / TILE));
-  const r1 = Math.floor(player.y            / TILE);
-  const r2 = Math.min(ROWS-1, Math.floor((player.y + player.h) / TILE));
+function defaultCampaignLevels() {
+  const l1 = defaultEditorLevel();
+  l1.key = 'garten';
+  l1.name = 'Level 1 - Der Garten';
+  l1.objective = 'Sammle Nahrung und erreiche das Tor.';
+  l1.cols = 60;
+  l1.tiles = makeArrayLevel(l1.cols);
+  fillRect(l1.tiles, 11, 0, 13, 21);
+  fillRect(l1.tiles, 11, 31, 13, 59);
+  fillRect(l1.tiles, 8, 5, 8, 11);
+  fillRect(l1.tiles, 7, 14, 7, 19);
+  fillRect(l1.tiles, 7, 22, 7, 29);
+  fillRect(l1.tiles, 7, 37, 7, 43);
+  fillRect(l1.tiles, 6, 50, 6, 56);
+  l1.spawn = { row: 8, col: 2 };
+  l1.goal = { row: 10, col: 57, w: 64, h: 76, label: 'Tor' };
+  l1.coins = [[10, 3], [10, 8], [10, 16], [7, 6], [7, 9], [6, 23], [6, 26], [6, 29], [10, 33], [10, 44], [6, 38], [6, 42], [5, 51], [5, 55], [10, 57]];
+  l1.foods = [[10, 11], [10, 20], [10, 40], [10, 56]];
 
-  for (let r = r1; r <= r2; r++) {
-    for (let c = c1; c <= c2; c++) {
-      if (!isSolid(r, c)) continue;
-      const ty = r * TILE;
-      if (player.vy >= 0) {
-        // Landing on top of tile
-        player.y = ty - player.h;
-        player.vy = 0;
-        player.onGround = true;
+  const l2 = defaultEditorLevel();
+  l2.key = 'wald';
+  l2.name = 'Level 2 - Der Wald';
+  l2.theme = 'forest';
+  l2.objective = 'Ueberlebe Kaefer, Spikes und Netze.';
+  l2.cols = 80;
+  l2.tiles = makeArrayLevel(l2.cols);
+  fillRect(l2.tiles, 11, 0, 13, 14);
+  fillRect(l2.tiles, 11, 19, 13, 36);
+  fillRect(l2.tiles, 11, 42, 13, 57);
+  fillRect(l2.tiles, 11, 63, 13, 79);
+  fillRect(l2.tiles, 8, 3, 8, 7);
+  fillRect(l2.tiles, 7, 8, 7, 13);
+  fillRect(l2.tiles, 9, 15, 9, 18);
+  fillRect(l2.tiles, 6, 22, 6, 27);
+  fillRect(l2.tiles, 9, 28, 9, 33);
+  fillRect(l2.tiles, 8, 37, 8, 41);
+  fillRect(l2.tiles, 7, 45, 7, 50);
+  fillRect(l2.tiles, 5, 52, 5, 57);
+  fillRect(l2.tiles, 8, 58, 8, 62);
+  fillRect(l2.tiles, 7, 66, 7, 70);
+  fillRect(l2.tiles, 6, 73, 6, 78);
+  l2.spawn = { row: 8, col: 2 };
+  l2.goal = { row: 10, col: 76, w: 62, h: 70, label: 'Ausgang' };
+  l2.coins = [[10, 3], [10, 7], [10, 12], [7, 4], [7, 6], [6, 10], [6, 12], [8, 16], [8, 17], [10, 22], [10, 30], [5, 23], [5, 26], [8, 29], [8, 32], [7, 38], [7, 40], [10, 48], [10, 54], [10, 68], [10, 75]];
+  l2.foods = [[10, 8], [8, 16], [10, 32], [8, 60], [10, 72]];
+  l2.spikes = [[10, 14], [10, 15], [10, 16], [10, 28], [10, 33], [10, 43], [10, 46], [10, 50], [10, 52]];
+  l2.nets = [[9, 13], [8, 30], [7, 44]];
+  l2.beetles = [[10, 19, 26, 62], [8, 23, 25, 72], [10, 42, 57, 78], [6, 66, 70, 66]];
+
+  const l3 = defaultEditorLevel();
+  l3.key = 'jagdhaus';
+  l3.name = 'Level 3 - Das Jagdhaus';
+  l3.theme = 'hunting';
+  l3.lockGoal = true;
+  l3.objective = 'Federn sammeln, Waechter besiegen, Jagdhaus oeffnen.';
+  l3.cols = 100;
+  l3.tiles = makeArrayLevel(l3.cols);
+  fillRect(l3.tiles, 11, 0, 13, 8);
+  fillRect(l3.tiles, 11, 15, 13, 24);
+  fillRect(l3.tiles, 11, 30, 13, 40);
+  fillRect(l3.tiles, 11, 47, 13, 57);
+  fillRect(l3.tiles, 11, 63, 13, 99);
+  fillRect(l3.tiles, 9, 10, 9, 13);
+  fillRect(l3.tiles, 9, 26, 9, 28);
+  fillRect(l3.tiles, 9, 42, 9, 45);
+  fillRect(l3.tiles, 9, 59, 9, 61);
+  fillRect(l3.tiles, 7, 4, 7, 7);
+  fillRect(l3.tiles, 7, 17, 7, 20);
+  fillRect(l3.tiles, 7, 32, 7, 35);
+  fillRect(l3.tiles, 7, 48, 7, 52);
+  fillRect(l3.tiles, 7, 65, 7, 69);
+  fillRect(l3.tiles, 7, 78, 7, 81);
+  fillRect(l3.tiles, 7, 88, 7, 91);
+  fillRect(l3.tiles, 5, 2, 5, 4);
+  fillRect(l3.tiles, 5, 12, 5, 15);
+  fillRect(l3.tiles, 5, 22, 5, 26);
+  fillRect(l3.tiles, 5, 37, 5, 40);
+  fillRect(l3.tiles, 5, 53, 5, 57);
+  fillRect(l3.tiles, 5, 70, 5, 74);
+  fillRect(l3.tiles, 5, 83, 5, 87);
+  fillRect(l3.tiles, 5, 92, 5, 96);
+  l3.spawn = { row: 8, col: 2 };
+  l3.goal = { row: 10, col: 95, w: 64, h: 84, label: 'Jagdhaus' };
+  l3.coins = [[10, 3], [10, 6], [8, 11], [8, 12], [10, 17], [10, 21], [6, 5], [6, 18], [8, 27], [10, 32], [10, 37], [4, 13], [4, 23], [8, 43], [8, 44], [10, 50], [10, 55], [6, 33], [6, 49], [8, 60], [10, 66], [10, 73], [10, 79], [10, 86], [4, 38], [4, 71], [4, 84], [4, 94]];
+  l3.foods = [[10, 7], [8, 27], [10, 54], [10, 68], [10, 90]];
+  l3.rescueTokens = [[6, 20], [6, 48], [6, 69], [4, 92]];
+  l3.spikes = [[10, 24], [10, 40], [10, 76]];
+  l3.nets = [[8, 42], [8, 61]];
+  l3.pressures = [24, 48, 74];
+  l3.ravens = [[7, 3, 10, 82, 12], [5, 16, 24, -78, 12], [6, 33, 43, 90, 14], [5, 68, 82, 84, 14]];
+  l3.minions = [[10, 35, 1, 2.4, 2, 200], [10, 58, 2, 2.15, 2, 220], [10, 84, 2, 2.0, 2, 240]];
+
+  return [l1, l2, l3];
+}
+
+class BudgiePhaserScene extends Phaser.Scene {
+  constructor() {
+    super('BudgiePhaserScene');
+
+    this.mode = MODE_MENU;
+    this.levels = defaultCampaignLevels();
+    this.levelIndex = 0;
+    this.customLevel = defaultEditorLevel();
+    this.currentLevel = null;
+    this.cameraX = 0;
+
+    this.score = 0;
+    this.bestScore = 0;
+    this.food = 100;
+    this.lives = 3;
+
+    this.player = null;
+    this.coins = [];
+    this.foods = [];
+    this.rescues = [];
+    this.traps = [];
+    this.enemies = [];
+    this.projectiles = [];
+
+    this.tileRT = null;
+    this.hud = null;
+    this.overlay = null;
+
+    this.editor = {
+      toolIndex: 0,
+      tools: [
+        'tile', 'erase', 'coin', 'food', 'rescue',
+        'beetle', 'raven', 'minion', 'spike', 'net', 'pressure',
+        'spawn', 'goal'
+      ],
+      cursorRow: 8,
+      cursorCol: 2,
+      cameraX: 0,
+      pendingRange: null,
+      message: '',
+      messageTimer: 0,
+      activeLevel: defaultEditorLevel(),
+      selected: null
+    };
+  }
+
+  preload() {
+    const svgs = makeSvgLibrary();
+    for (const [key, svg] of Object.entries(svgs)) {
+      this.load.image(key, toDataUri(svg));
+    }
+  }
+
+  create() {
+    this.createAnimations();
+
+    this.keys = this.input.keyboard.addKeys({
+      left: Phaser.Input.Keyboard.KeyCodes.LEFT,
+      right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+      up: Phaser.Input.Keyboard.KeyCodes.UP,
+      a: Phaser.Input.Keyboard.KeyCodes.A,
+      d: Phaser.Input.Keyboard.KeyCodes.D,
+      w: Phaser.Input.Keyboard.KeyCodes.W,
+      space: Phaser.Input.Keyboard.KeyCodes.SPACE,
+      enter: Phaser.Input.Keyboard.KeyCodes.ENTER,
+      r: Phaser.Input.Keyboard.KeyCodes.R,
+      e: Phaser.Input.Keyboard.KeyCodes.E,
+      esc: Phaser.Input.Keyboard.KeyCodes.ESC,
+      s: Phaser.Input.Keyboard.KeyCodes.S,
+      l: Phaser.Input.Keyboard.KeyCodes.L,
+      x: Phaser.Input.Keyboard.KeyCodes.X,
+      i: Phaser.Input.Keyboard.KeyCodes.I,
+      t: Phaser.Input.Keyboard.KeyCodes.T,
+      k: Phaser.Input.Keyboard.KeyCodes.K,
+      n: Phaser.Input.Keyboard.KeyCodes.N,
+      o: Phaser.Input.Keyboard.KeyCodes.O,
+      c: Phaser.Input.Keyboard.KeyCodes.C,
+      g: Phaser.Input.Keyboard.KeyCodes.G,
+      j: Phaser.Input.Keyboard.KeyCodes.J,
+      bracketLeft: Phaser.Input.Keyboard.KeyCodes.OPEN_BRACKET,
+      bracketRight: Phaser.Input.Keyboard.KeyCodes.CLOSED_BRACKET,
+      one: Phaser.Input.Keyboard.KeyCodes.ONE,
+      two: Phaser.Input.Keyboard.KeyCodes.TWO,
+      three: Phaser.Input.Keyboard.KeyCodes.THREE,
+      four: Phaser.Input.Keyboard.KeyCodes.FOUR,
+      five: Phaser.Input.Keyboard.KeyCodes.FIVE,
+      six: Phaser.Input.Keyboard.KeyCodes.SIX,
+      seven: Phaser.Input.Keyboard.KeyCodes.SEVEN,
+      eight: Phaser.Input.Keyboard.KeyCodes.EIGHT,
+      nine: Phaser.Input.Keyboard.KeyCodes.NINE,
+      zero: Phaser.Input.Keyboard.KeyCodes.ZERO,
+      del: Phaser.Input.Keyboard.KeyCodes.DELETE,
+      back: Phaser.Input.Keyboard.KeyCodes.BACKSPACE
+    });
+
+    this.hud = this.add.text(10, 8, '', {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: '10px',
+      color: '#ffffff',
+      lineSpacing: 6,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      padding: { x: 8, y: 6 }
+    }).setDepth(50).setScrollFactor(0);
+
+    this.overlay = this.add.text(W / 2, H / 2, '', {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: '14px',
+      color: '#fff59d',
+      align: 'center',
+      stroke: '#000000',
+      strokeThickness: 6
+    }).setOrigin(0.5).setDepth(60).setScrollFactor(0);
+
+    this.input.mouse.disableContextMenu();
+
+    this.input.on('pointerdown', (pointer) => {
+      if (this.mode !== MODE_EDITOR) return;
+      const worldX = this.editor.cameraX + pointer.x;
+      const col = clamp(Math.floor(worldX / TILE), 0, this.editor.activeLevel.cols - 1);
+      const row = clamp(Math.floor(pointer.y / TILE), 0, ROWS - 1);
+      if (pointer.rightButtonDown()) {
+        this.editorEraseAt(row, col);
       } else {
-        // Bumping a ceiling
-        player.y = ty + TILE;
-        player.vy = 0;
+        this.editorApplyTool(row, col);
+      }
+    });
+
+    this.showMenu();
+  }
+
+  createAnimations() {
+    const create2 = (key, a, b, fps = 4) => {
+      this.anims.create({
+        key,
+        frames: [{ key: a }, { key: b }],
+        frameRate: fps,
+        repeat: -1
+      });
+    };
+    create2('anim_player', 'player0', 'player1', 6);
+    create2('anim_coin', 'coin0', 'coin1', 5);
+    create2('anim_food', 'food0', 'food1', 4);
+    create2('anim_rescue', 'rescue0', 'rescue1', 4);
+    create2('anim_beetle', 'beetle0', 'beetle1', 5);
+    create2('anim_raven', 'raven0', 'raven1', 8);
+    create2('anim_minion', 'minion0', 'minion1', 3);
+    create2('anim_projectile', 'projectile0', 'projectile1', 9);
+    create2('anim_spike', 'spike0', 'spike1', 2);
+    create2('anim_net', 'net0', 'net1', 2);
+    this.anims.create({
+      key: 'anim_pressure',
+      frames: [{ key: 'pressure0' }, { key: 'pressure1' }, { key: 'pressure2' }],
+      frameRate: 6,
+      repeat: -1
+    });
+  }
+
+  showMenu() {
+    this.mode = MODE_MENU;
+    this.clearWorld();
+    this.overlay.setText([
+      'BUDGIE PLATFORMER',
+      '',
+      'ENTER: Kampagne starten',
+      'E: Level Editor oeffnen',
+      '',
+      'Editor: eigene Level bauen,',
+      'alles per JSON einstellbar'
+    ]);
+    this.updateHudText();
+  }
+
+  startCampaign() {
+    this.score = 0;
+    this.food = 100;
+    this.lives = 3;
+    this.levelIndex = 0;
+    this.loadLevel(this.levels[this.levelIndex], false);
+  }
+
+  loadLevel(levelData, fromEditor) {
+    this.clearWorld();
+    this.mode = MODE_PLAY;
+    this.overlay.setText('');
+
+    this.currentLevel = normalizeLevel(levelData);
+    this.currentLevel.key = levelData.key || this.currentLevel.key;
+
+    if (!fromEditor) {
+      this.food = 100;
+    }
+
+    this.buildTileCache(this.currentLevel);
+
+    this.coins = this.currentLevel.coins.map(([r, c]) => this.spawnCollectible('anim_coin', r, c, 'coin'));
+    this.foods = this.currentLevel.foods.map(([r, c]) => this.spawnCollectible('anim_food', r, c, 'food'));
+    this.rescues = this.currentLevel.rescueTokens.map(([r, c]) => this.spawnCollectible('anim_rescue', r, c, 'rescue'));
+
+    this.traps = [];
+    for (const [r, c] of this.currentLevel.spikes) this.traps.push(this.spawnTrap('spike', r, c));
+    for (const [r, c] of this.currentLevel.nets) this.traps.push(this.spawnTrap('net', r, c));
+    for (const col of this.currentLevel.pressures) this.traps.push(this.spawnTrap('pressure', 10, col));
+
+    this.enemies = [];
+    for (const [row, left, right, speed] of this.currentLevel.beetles) this.enemies.push(this.spawnEnemy('beetle', row, left, right, speed));
+    for (const [row, left, right, speed, amp] of this.currentLevel.ravens) this.enemies.push(this.spawnEnemy('raven', row, left, right, speed, amp));
+    for (const [row, col, patrol, shootCd, hp, projSpeed] of this.currentLevel.minions) this.enemies.push(this.spawnEnemy('minion', row, col - patrol, col + patrol, 56, 0, shootCd, hp, projSpeed));
+
+    this.goalSprite = this.add.sprite(0, 0, this.goalTextureForLevel()).setOrigin(0, 0).setDepth(20);
+
+    this.player = {
+      x: this.currentLevel.spawn.col * TILE,
+      y: this.currentLevel.spawn.row * TILE,
+      w: 22,
+      h: 26,
+      vx: 0,
+      vy: 0,
+      onGround: false,
+      face: 1,
+      invuln: 0,
+      coyote: 0,
+      jumpBuffer: 0,
+      netSlow: 0,
+      trapped: 0,
+      sprite: this.add.sprite(0, 0, 'player0').setOrigin(0, 0).setDepth(35)
+    };
+    this.player.sprite.play('anim_player');
+
+    this.cameraX = 0;
+    this.updateGoalSprite();
+    this.updateHudText();
+  }
+
+  goalTextureForLevel() {
+    if (this.currentLevel.theme === 'forest') return 'forestDoor';
+    if (this.currentLevel.theme === 'hunting') return 'houseDoor';
+    return 'gate';
+  }
+
+  spawnCollectible(animKey, row, col, kind) {
+    const x = col * TILE + TILE / 2;
+    const y = row * TILE + TILE / 2;
+    const s = this.add.sprite(x, y, animKey.includes('coin') ? 'coin0' : animKey.includes('food') ? 'food0' : 'rescue0').setDepth(24);
+    s.play(animKey);
+    return { kind, row, col, x, y, collected: false, sprite: s };
+  }
+
+  spawnTrap(type, row, col) {
+    let sprite = null;
+    let w = TILE;
+    let h = 16;
+    let y = row * TILE;
+
+    if (type === 'spike') {
+      y = row * TILE + (TILE - h);
+      sprite = this.add.sprite(col * TILE, y, 'spike0').setOrigin(0, 0).setDepth(22).play('anim_spike');
+      w = TILE;
+      h = 16;
+    } else if (type === 'net') {
+      w = 40;
+      h = 40;
+      sprite = this.add.sprite(col * TILE - 16, y, 'net0').setOrigin(0, 0).setDepth(22).play('anim_net');
+    } else {
+      w = 48;
+      h = 12;
+      y = 11 * TILE - 8;
+      sprite = this.add.sprite(col * TILE + 8, y, 'pressure0').setOrigin(0, 0).setDepth(22).play('anim_pressure');
+    }
+
+    return {
+      type,
+      row,
+      col,
+      x: sprite.x,
+      y: sprite.y,
+      w,
+      h,
+      sprite,
+      active: true,
+      timer: 0,
+      state: 'idle'
+    };
+  }
+
+  spawnEnemy(type, surfaceRow, leftCol, rightCol, speed, amp = 12, shootCd = 2, hp = 2, projSpeed = 200) {
+    let w = 26;
+    let h = 20;
+    let key = 'beetle0';
+    if (type === 'raven') {
+      w = 30;
+      h = 22;
+      key = 'raven0';
+    }
+    if (type === 'minion') {
+      w = 28;
+      h = 40;
+      key = 'minion0';
+    }
+
+    const x = leftCol * TILE;
+    const y = (surfaceRow + 1) * TILE - h;
+    const sprite = this.add.sprite(x, y, key).setOrigin(0, 0).setDepth(30);
+    if (type === 'beetle') sprite.play('anim_beetle');
+    if (type === 'raven') sprite.play('anim_raven');
+    if (type === 'minion') sprite.play('anim_minion');
+
+    return {
+      type,
+      x,
+      y,
+      w,
+      h,
+      vx: speed,
+      left: leftCol * TILE,
+      right: (rightCol + 1) * TILE - w,
+      amp,
+      phase: Math.random() * Math.PI * 2,
+      shootCd,
+      shootTimer: shootCd,
+      projSpeed,
+      hp,
+      alive: true,
+      sprite
+    };
+  }
+
+  buildTileCache(level) {
+    if (this.tileRT) this.tileRT.destroy();
+    this.tileRT = this.add.renderTexture(0, 0, level.cols * TILE, H).setOrigin(0, 0).setDepth(5);
+
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < level.cols; c++) {
+        if (level.tiles[r][c] !== 1) continue;
+        const key = r >= 11 ? 'tileGround' : 'tilePlatform';
+        this.tileRT.draw(key, c * TILE, r * TILE);
       }
     }
   }
-}
 
-// ─── UPDATE ──────────────────────────────────────────────────────────────────
-function update(dt) {
-  // Handle level-transition countdown (player frozen, scene still drawn)
-  if (gameState === 'transitioning') {
-    levelCompleteTimer += dt;
-    if (levelCompleteTimer >= 2.5) {
-      gameState = 'level2';
+  clearWorld() {
+    if (this.tileRT) {
+      this.tileRT.destroy();
+      this.tileRT = null;
     }
-    return;
+
+    const destroyList = [];
+    if (this.player && this.player.sprite) destroyList.push(this.player.sprite);
+    for (const c of this.coins) if (c.sprite) destroyList.push(c.sprite);
+    for (const f of this.foods) if (f.sprite) destroyList.push(f.sprite);
+    for (const r of this.rescues) if (r.sprite) destroyList.push(r.sprite);
+    for (const t of this.traps) if (t.sprite) destroyList.push(t.sprite);
+    for (const e of this.enemies) if (e.sprite) destroyList.push(e.sprite);
+    for (const p of this.projectiles) if (p.sprite) destroyList.push(p.sprite);
+    if (this.goalSprite) destroyList.push(this.goalSprite);
+
+    for (const obj of destroyList) obj.destroy();
+
+    this.player = null;
+    this.goalSprite = null;
+    this.coins = [];
+    this.foods = [];
+    this.rescues = [];
+    this.traps = [];
+    this.enemies = [];
+    this.projectiles = [];
   }
 
-  // Horizontal input
-  if (keys.has('ArrowLeft') || keys.has('KeyA')) {
-    player.vx = -MOVE_SPEED;
-    player.facing = -1;
-  } else if (keys.has('ArrowRight') || keys.has('KeyD')) {
-    player.vx = MOVE_SPEED;
-    player.facing = 1;
-  } else {
-    player.vx = 0;
+  enterEditor() {
+    this.mode = MODE_EDITOR;
+    this.clearWorld();
+    this.overlay.setText('');
+    this.editor.activeLevel = normalizeLevel(this.editor.activeLevel || defaultEditorLevel());
+    this.editor.pendingRange = null;
+    this.editor.selected = null;
+    this.editor.cameraX = 0;
+    this.editor.message = 'Editor aktiv';
+    this.editor.messageTimer = 1.2;
+    this.buildTileCache(this.editor.activeLevel);
+    this.updateHudText();
   }
 
-  // Flutter: holding jump in the air slows the fall
-  const fluttering = !player.onGround &&
-    (keys.has('Space') || keys.has('ArrowUp'));
-  const grav = fluttering ? FLUTTER_GRAV : GRAVITY;
-  player.vy += grav * dt;
-  if (fluttering && player.vy > FLUTTER_VMAX) player.vy = FLUTTER_VMAX;
-
-  // Move X → resolve → move Y → resolve (separate axes = stable AABB)
-  player.x += player.vx * dt;
-  // Clamp to level bounds horizontally
-  player.x = Math.max(0, Math.min(player.x, COLS * TILE - player.w));
-  resolveX();
-
-  player.onGround = false;
-  player.y += player.vy * dt;
-  resolveY();
-
-  // Death: fell below the canvas
-  if (player.y > CANVAS_H + 64) {
-    triggerGameOver();
-    return;
+  playCustomFromEditor() {
+    this.customLevel = normalizeLevel(this.editor.activeLevel);
+    this.score = 0;
+    this.food = 100;
+    this.lives = 3;
+    this.loadLevel(this.customLevel, true);
   }
 
-  // Food drain
-  foodMeter -= FOOD_DRAIN * dt;
-  if (foodMeter <= 0) {
-    foodMeter = 0;
-    triggerGameOver();
-    return;
-  }
-
-  // Collect coins and food; check hazards
-  checkCollections();
-  if (gameState !== 'playing') return;
-
-  // Update beetles
-  for (const b of beetles) updateBeetle(b, dt);
-
-  // Camera follows player, clamped to level bounds
-  cameraX = player.x + player.w / 2 - CANVAS_W / 2;
-  cameraX = Math.max(0, Math.min(cameraX, COLS * TILE - CANVAS_W));
-}
-
-function triggerGameOver() {
-  bestScore = Math.max(bestScore, score);
-  gameState = 'gameover';
-}
-
-function checkCollections() {
-  const px = player.x, py = player.y, pw = player.w, ph = player.h;
-
-  for (const coin of coins) {
-    if (coin.collected) continue;
-    if (rectsOverlap(px, py, pw, ph,
-        coin.x - COIN_R, coin.y - COIN_R, COIN_R * 2, COIN_R * 2)) {
-      coin.collected = true;
-      score += COIN_SCORE;
+  saveEditorLocal() {
+    try {
+      localStorage.setItem(EDITOR_STORAGE_KEY, JSON.stringify(this.editor.activeLevel));
+      this.editor.message = 'Editor gespeichert';
+      this.editor.messageTimer = 1.2;
+    } catch {
+      this.editor.message = 'Speichern fehlgeschlagen';
+      this.editor.messageTimer = 1.5;
     }
   }
 
-  for (const food of foods) {
-    if (food.collected) continue;
-    if (rectsOverlap(px, py, pw, ph,
-        food.x - FOOD_R, food.y - FOOD_R, FOOD_R * 2, FOOD_R * 2)) {
-      food.collected = true;
-      foodMeter = Math.min(FOOD_MAX, foodMeter + FOOD_COLLECT);
+  loadEditorLocal() {
+    try {
+      const txt = localStorage.getItem(EDITOR_STORAGE_KEY);
+      if (!txt) {
+        this.editor.message = 'Kein Save gefunden';
+        this.editor.messageTimer = 1.5;
+        return;
+      }
+      this.editor.activeLevel = normalizeLevel(JSON.parse(txt));
+      this.buildTileCache(this.editor.activeLevel);
+      this.editor.message = 'Editor geladen';
+      this.editor.messageTimer = 1.2;
+    } catch {
+      this.editor.message = 'Laden fehlgeschlagen';
+      this.editor.messageTimer = 1.5;
     }
   }
 
-  // Goal: reach the garden gate
-  if (gardenGate && rectsOverlap(px, py, pw, ph,
-      gardenGate.x + 10, gardenGate.y, gardenGate.w - 20, gardenGate.h)) {
-    bestScore = Math.max(bestScore, score);
-    gameState = 'transitioning';
-    levelCompleteTimer = 0;
-  // Spikes: instant death on any touch
-  for (const s of spikes) {
-    if (rectsOverlap(px, py, pw, ph, s.x, s.y, s.w, s.h)) {
-      triggerGameOver();
+  exportEditorJson() {
+    window.prompt('Custom-Level JSON (kopieren):', JSON.stringify(this.editor.activeLevel, null, 2));
+  }
+
+  importEditorJson() {
+    const txt = window.prompt('Custom-Level JSON einfuegen:');
+    if (!txt) return;
+    try {
+      this.editor.activeLevel = normalizeLevel(JSON.parse(txt));
+      this.buildTileCache(this.editor.activeLevel);
+      this.editor.message = 'Import OK';
+      this.editor.messageTimer = 1.2;
+    } catch {
+      this.editor.message = 'Ungueltiges JSON';
+      this.editor.messageTimer = 1.6;
+    }
+  }
+
+  editorToolName() {
+    return this.editor.tools[this.editor.toolIndex];
+  }
+
+  editorPickAt(row, col) {
+    const lvl = this.editor.activeLevel;
+
+    const findIn = (arr) => arr.find((v) => v[0] === row && v[1] === col);
+
+    if (findIn(lvl.coins)) return { type: 'coins', row, col };
+    if (findIn(lvl.foods)) return { type: 'foods', row, col };
+    if (findIn(lvl.rescueTokens)) return { type: 'rescueTokens', row, col };
+    if (findIn(lvl.spikes)) return { type: 'spikes', row, col };
+    if (findIn(lvl.nets)) return { type: 'nets', row, col };
+
+    const pressure = lvl.pressures.find((v) => v === col);
+    if (typeof pressure === 'number') return { type: 'pressures', col };
+
+    const beetle = lvl.beetles.find((v) => v[0] === row && col >= v[1] && col <= v[2]);
+    if (beetle) return { type: 'beetles', ref: beetle };
+
+    const raven = lvl.ravens.find((v) => v[0] === row && col >= v[1] && col <= v[2]);
+    if (raven) return { type: 'ravens', ref: raven };
+
+    const minion = lvl.minions.find((v) => v[0] === row && v[1] === col);
+    if (minion) return { type: 'minions', ref: minion };
+
+    if (lvl.spawn.row === row && lvl.spawn.col === col) return { type: 'spawn' };
+    if (lvl.goal.row === row && lvl.goal.col === col) return { type: 'goal' };
+
+    return null;
+  }
+
+  editorEraseAt(row, col) {
+    const lvl = this.editor.activeLevel;
+    lvl.tiles[row][col] = 0;
+
+    const drop = (arr) => {
+      const idx = arr.findIndex((v) => v[0] === row && v[1] === col);
+      if (idx >= 0) arr.splice(idx, 1);
+    };
+
+    drop(lvl.coins);
+    drop(lvl.foods);
+    drop(lvl.rescueTokens);
+    drop(lvl.spikes);
+    drop(lvl.nets);
+
+    lvl.pressures = lvl.pressures.filter((v) => v !== col);
+    lvl.minions = lvl.minions.filter((v) => !(v[0] === row && v[1] === col));
+    lvl.beetles = lvl.beetles.filter((v) => !(v[0] === row && col >= v[1] && col <= v[2]));
+    lvl.ravens = lvl.ravens.filter((v) => !(v[0] === row && col >= v[1] && col <= v[2]));
+
+    if (lvl.spawn.row === row && lvl.spawn.col === col) {
+      lvl.spawn = { row: 8, col: 2 };
+    }
+    if (lvl.goal.row === row && lvl.goal.col === col) {
+      lvl.goal.row = 10;
+      lvl.goal.col = clamp(lvl.cols - 6, 0, lvl.cols - 1);
+    }
+
+    this.buildTileCache(lvl);
+  }
+
+  editorTogglePair(listName, row, col) {
+    const arr = this.editor.activeLevel[listName];
+    const idx = arr.findIndex((v) => v[0] === row && v[1] === col);
+    if (idx >= 0) arr.splice(idx, 1);
+    else arr.push([row, col]);
+  }
+
+  editorApplyTool(row, col) {
+    const lvl = this.editor.activeLevel;
+    const tool = this.editorToolName();
+
+    if (tool === 'tile') {
+      lvl.tiles[row][col] = lvl.tiles[row][col] ? 0 : 1;
+      this.buildTileCache(lvl);
       return;
     }
-  }
-
-  // Beetles: stomp from above = defeat (+20); side hit = game over
-  for (const b of beetles) {
-    if (b.defeated) continue;
-    if (!rectsOverlap(px, py, pw, ph, b.x, b.y, b.w, b.h)) continue;
-
-    const playerBottom = py + ph;
-    const stompZone    = b.y + 8;   // within top 8px of beetle = stomp
-    if (player.vy > 0 && playerBottom <= stompZone) {
-      // Stomp: defeat beetle, bounce player
-      b.defeated = true;
-      player.vy  = JUMP_VEL * 0.55;
-      score     += 20;
-    } else {
-      triggerGameOver();
+    if (tool === 'erase') {
+      this.editorEraseAt(row, col);
       return;
     }
-  }
 
-  // Win: reach the birdhouse / exit
-  if (birdhouse && rectsOverlap(px, py, pw, ph,
-      birdhouse.x, birdhouse.y, birdhouse.w, birdhouse.h)) {
-    bestScore = Math.max(bestScore, score);
-    if (currentLevel === 1) {
-      // Advance to Level 2
-      currentLevel = 2;
-      initLevel();
-    } else {
-      gameState = 'win';
+    if (tool === 'coin') return this.editorTogglePair('coins', row, col);
+    if (tool === 'food') return this.editorTogglePair('foods', row, col);
+    if (tool === 'rescue') return this.editorTogglePair('rescueTokens', row, col);
+    if (tool === 'spike') return this.editorTogglePair('spikes', row, col);
+    if (tool === 'net') return this.editorTogglePair('nets', row, col);
+
+    if (tool === 'pressure') {
+      const idx = lvl.pressures.indexOf(col);
+      if (idx >= 0) lvl.pressures.splice(idx, 1);
+      else lvl.pressures.push(col);
+      return;
+    }
+
+    if (tool === 'spawn') {
+      lvl.spawn = { row, col };
+      return;
+    }
+
+    if (tool === 'goal') {
+      lvl.goal.row = row;
+      lvl.goal.col = col;
+      return;
+    }
+
+    if (tool === 'minion') {
+      const idx = lvl.minions.findIndex((v) => v[0] === row && v[1] === col);
+      if (idx >= 0) lvl.minions.splice(idx, 1);
+      else lvl.minions.push([row, col, 2, 2.0, 2, 220]);
+      return;
+    }
+
+    if (tool === 'beetle' || tool === 'raven') {
+      if (!this.editor.pendingRange) {
+        this.editor.pendingRange = { row, col };
+        this.editor.message = 'Patrouille-Ende setzen';
+        this.editor.messageTimer = 1.2;
+        return;
+      }
+      const s = this.editor.pendingRange;
+      const left = Math.min(s.col, col);
+      const right = Math.max(s.col, col);
+      if (tool === 'beetle') lvl.beetles.push([s.row, left, right, 72]);
+      else lvl.ravens.push([s.row, left, right, 86, 14]);
+      this.editor.pendingRange = null;
     }
   }
-}
 
-function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
-  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
-}
+  handleEditorKeys() {
+    const k = this.keys;
+    const ed = this.editor;
+    const lvl = ed.activeLevel;
 
-// ─── BEETLE UPDATE ───────────────────────────────────────────────────────────
-function updateBeetle(b, dt) {
-  b.x += b.speed * b.dir * dt;
-  if (b.dir === 1 && b.x >= b.rightBound) {
-    b.x   = b.rightBound;
-    b.dir = -1;
-  } else if (b.dir === -1 && b.x <= b.leftBound) {
-    b.x   = b.leftBound;
-    b.dir = 1;
-  }
-}
-
-// ─── DRAW HELPERS ────────────────────────────────────────────────────────────
-function drawBackground() {
-  // Sky gradient
-  const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-  grad.addColorStop(0, '#3a8fd4');
-  grad.addColorStop(1, '#a8d8f0');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  // Clouds with 40% parallax
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  for (const cl of CLOUDS) {
-    const sx = cl.x - cameraX * 0.4;
-    if (sx + cl.w < 0 || sx > CANVAS_W) continue;
-    drawCloudShape(sx, cl.y, cl.w, cl.h);
-  }
-}
-
-function drawCloudShape(x, y, w, h) {
-  ctx.beginPath();
-  ctx.ellipse(x + w * 0.28, y + h * 0.6,  w * 0.28, h * 0.45, 0, 0, Math.PI * 2);
-  ctx.ellipse(x + w * 0.55, y + h * 0.42, w * 0.32, h * 0.5,  0, 0, Math.PI * 2);
-  ctx.ellipse(x + w * 0.78, y + h * 0.62, w * 0.24, h * 0.42, 0, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-// Dark forest background for Level 2
-const TREES = [
-  { x:  80, w: 38, h: 160 }, { x: 200, w: 28, h: 200 }, { x: 330, w: 44, h: 180 },
-  { x: 480, w: 32, h: 220 }, { x: 620, w: 40, h: 170 }, { x: 760, w: 30, h: 195 },
-  { x: 900, w: 36, h: 185 }, { x: 1050, w: 42, h: 210 }, { x: 1200, w: 28, h: 175 },
-  { x: 1360, w: 38, h: 200 }, { x: 1510, w: 34, h: 190 }, { x: 1660, w: 44, h: 215 },
-  { x: 1820, w: 30, h: 180 }, { x: 1970, w: 40, h: 205 }, { x: 2120, w: 36, h: 170 },
-  { x: 2280, w: 44, h: 195 }, { x: 2430, w: 28, h: 185 },
-];
-
-function drawForestBackground() {
-  // Dark sky
-  const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-  grad.addColorStop(0, '#0a120a');
-  grad.addColorStop(0.6, '#1a2a1a');
-  grad.addColorStop(1, '#2a1a0a');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  // Tree silhouettes with 35% parallax
-  ctx.fillStyle = '#0d1a0d';
-  for (const t of TREES) {
-    const sx = t.x - cameraX * 0.35;
-    if (sx + t.w < 0 || sx > CANVAS_W) continue;
-    const groundY = CANVAS_H - 96;
-    // Trunk
-    ctx.fillRect(sx + t.w * 0.38, groundY - t.h * 0.3, t.w * 0.24, t.h * 0.3);
-    // Crown – triangle
-    ctx.beginPath();
-    ctx.moveTo(sx + t.w / 2, groundY - t.h);
-    ctx.lineTo(sx,           groundY - t.h * 0.3);
-    ctx.lineTo(sx + t.w,     groundY - t.h * 0.3);
-    ctx.closePath();
-    ctx.fill();
-    // Second, wider lower crown
-    ctx.beginPath();
-    ctx.moveTo(sx + t.w / 2 - t.w * 0.1, groundY - t.h * 0.55);
-    ctx.lineTo(sx - t.w * 0.2,            groundY - t.h * 0.2);
-    ctx.lineTo(sx + t.w * 1.2,            groundY - t.h * 0.2);
-    ctx.closePath();
-    ctx.fill();
-  }
-}
-
-/** Draw a beetle at its world position (screen-space via cameraX). */
-function drawBeetle(b) {
-  const sx = Math.floor(b.x - cameraX);
-  const sy = Math.floor(b.y);
-  const w  = b.w, h = b.h;
-
-  // Shell body
-  ctx.fillStyle = '#8B0000';
-  ctx.fillRect(sx + 2, sy + 4, w - 4, h - 4);
-  // Shell highlight
-  ctx.fillStyle = '#a31515';
-  ctx.fillRect(sx + 4, sy + 5, w - 10, 4);
-  // Head
-  ctx.fillStyle = '#5a0000';
-  ctx.fillRect(sx + (b.dir > 0 ? w - 6 : 0), sy + 6, 6, h - 8);
-  // Eyes
-  ctx.fillStyle = '#ff4444';
-  const ex = b.dir > 0 ? sx + w - 5 : sx + 1;
-  ctx.fillRect(ex, sy + 6, 3, 3);
-  // Legs (3 per side)
-  ctx.fillStyle = '#3a0000';
-  for (let i = 0; i < 3; i++) {
-    const lx = sx + 4 + i * 6;
-    ctx.fillRect(lx, sy + h - 3, 3, 4);   // legs below body
-  }
-  // Antennae
-  ctx.fillStyle = '#3a0000';
-  if (b.dir > 0) {
-    ctx.fillRect(sx + w - 4, sy + 3, 1, 4);
-    ctx.fillRect(sx + w - 2, sy + 2, 1, 4);
-  } else {
-    ctx.fillRect(sx + 3, sy + 3, 1, 4);
-    ctx.fillRect(sx + 1, sy + 2, 1, 4);
-  }
-}
-
-/** Draw a spike (triangle pointing up). */
-function drawSpike(s) {
-  const sx = Math.floor(s.x - cameraX);
-  const sy = s.y;
-  const w  = s.w, h = s.h;
-
-  ctx.fillStyle = '#888';
-  ctx.beginPath();
-  ctx.moveTo(sx,           sy + h);   // bottom-left
-  ctx.lineTo(sx + w / 2,   sy);       // tip
-  ctx.lineTo(sx + w,       sy + h);   // bottom-right
-  ctx.closePath();
-  ctx.fill();
-
-  // Highlight along left face
-  ctx.fillStyle = '#aaa';
-  ctx.beginPath();
-  ctx.moveTo(sx + 2,       sy + h - 2);
-  ctx.lineTo(sx + w / 2,   sy + 2);
-  ctx.lineTo(sx + w / 2 + 3, sy + 2);
-  ctx.lineTo(sx + 5,       sy + h - 2);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function drawTile(sx, sy, row) {
-  if (row >= 11) {
-    // Dirt body
-    ctx.fillStyle = '#7a4e2d';
-    ctx.fillRect(sx, sy, TILE, TILE);
-    // Thin darker border
-    ctx.fillStyle = '#5c3a1e';
-    ctx.fillRect(sx, sy + TILE - 2, TILE, 2);
-    if (row === 11) {
-      // Grass top
-      ctx.fillStyle = '#3a7d44';
-      ctx.fillRect(sx, sy, TILE, 7);
-      ctx.fillStyle = '#4caf50';
-      ctx.fillRect(sx, sy, TILE, 4);
+    if (Phaser.Input.Keyboard.JustDown(k.esc)) {
+      this.showMenu();
+      return;
     }
-  } else {
-    // Wooden platform
-    ctx.fillStyle = '#7a5230';
-    ctx.fillRect(sx, sy, TILE, TILE);
-    // Grain lines
-    ctx.fillStyle = '#8b6340';
-    ctx.fillRect(sx, sy,     TILE, 3);
-    ctx.fillRect(sx, sy + 6, TILE, 2);
-    ctx.fillStyle = '#6b4423';
-    ctx.fillRect(sx, sy + TILE - 3, TILE, 3);
-  }
-}
+    if (Phaser.Input.Keyboard.JustDown(k.enter)) {
+      this.playCustomFromEditor();
+      return;
+    }
 
-function drawGardenGate() {
-  const sx = Math.floor(gardenGate.x - cameraX);
-  const sy = gardenGate.y;
-  const w  = gardenGate.w;
-  const h  = gardenGate.h;
-  const postW = 10;
-  const archH = 16;
+    if (Phaser.Input.Keyboard.JustDown(k.s)) this.saveEditorLocal();
+    if (Phaser.Input.Keyboard.JustDown(k.l)) this.loadEditorLocal();
+    if (Phaser.Input.Keyboard.JustDown(k.x)) this.exportEditorJson();
+    if (Phaser.Input.Keyboard.JustDown(k.i)) this.importEditorJson();
 
-  // Posts – dark green wood
-  ctx.fillStyle = '#1b5e20';
-  ctx.fillRect(sx,              sy, postW, h);
-  ctx.fillRect(sx + w - postW,  sy, postW, h);
-  // Post highlights
-  ctx.fillStyle = '#2e7d32';
-  ctx.fillRect(sx + 2,              sy + 2, postW - 4, h - 4);
-  ctx.fillRect(sx + w - postW + 2,  sy + 2, postW - 4, h - 4);
+    if (Phaser.Input.Keyboard.JustDown(k.t)) {
+      const themes = ['garden', 'forest', 'hunting'];
+      const idx = themes.indexOf(lvl.theme);
+      lvl.theme = themes[(idx + 1) % themes.length];
+    }
 
-  // Top cross-bar
-  ctx.fillStyle = '#1b5e20';
-  ctx.fillRect(sx, sy, w, archH);
-  ctx.fillStyle = '#2e7d32';
-  ctx.fillRect(sx + 2, sy + 2, w - 4, archH - 4);
+    if (Phaser.Input.Keyboard.JustDown(k.k)) lvl.lockGoal = !lvl.lockGoal;
 
-  // Leafy arch decoration above the gate
-  const leafW = 9;
-  const leafsX = [sx + postW, sx + postW + leafW + 2, sx + postW + (leafW + 2) * 2,
-                  sx + w - postW - leafW * 3 - 2];
-  ctx.fillStyle = '#4caf50';
-  for (const lx of leafsX) {
-    ctx.fillRect(lx, sy - 10, leafW, 12);
-  }
-  ctx.fillStyle = '#81c784';
-  for (const lx of leafsX) {
-    ctx.fillRect(lx + 2, sy - 9, leafW - 4, 8);
-  }
-  // Small flower dots on the arch
-  ctx.fillStyle = '#fdd835';
-  ctx.fillRect(sx + postW + 3,               sy - 10, 4, 4);
-  ctx.fillRect(sx + postW + leafW * 2 + 5,   sy - 10, 4, 4);
+    if (Phaser.Input.Keyboard.JustDown(k.n)) {
+      const val = window.prompt('Levelname:', lvl.name);
+      if (val) lvl.name = val;
+    }
+    if (Phaser.Input.Keyboard.JustDown(k.o)) {
+      const val = window.prompt('Objective:', lvl.objective);
+      if (val) lvl.objective = val;
+    }
+    if (Phaser.Input.Keyboard.JustDown(k.c)) {
+      const val = window.prompt('Spalten (30-250):', String(lvl.cols));
+      if (val) {
+        const next = clamp(Math.floor(Number(val)), 30, 250);
+        const resized = normalizeLevel({ ...lvl, cols: next });
+        this.editor.activeLevel = resized;
+        this.buildTileCache(resized);
+      }
+    }
+    if (Phaser.Input.Keyboard.JustDown(k.g)) {
+      const label = window.prompt('Goal Label:', lvl.goal.label);
+      const w = window.prompt('Goal Breite 32-160:', String(lvl.goal.w));
+      const h = window.prompt('Goal Hoehe 48-160:', String(lvl.goal.h));
+      if (label) lvl.goal.label = label;
+      if (w) lvl.goal.w = clamp(Math.floor(Number(w)), 32, 160);
+      if (h) lvl.goal.h = clamp(Math.floor(Number(h)), 48, 160);
+    }
 
-  // Vine blobs on left post
-  ctx.fillStyle = '#388e3c';
-  ctx.fillRect(sx + postW - 4, sy + 20, 6, 5);
-  ctx.fillRect(sx + postW - 5, sy + 34, 6, 5);
-  ctx.fillRect(sx + postW - 4, sy + 48, 6, 5);
-  // Vine blobs on right post
-  ctx.fillRect(sx + w - postW - 2, sy + 26, 6, 5);
-  ctx.fillRect(sx + w - postW - 3, sy + 40, 6, 5);
-  ctx.fillRect(sx + w - postW - 2, sy + 54, 6, 5);
+    if (Phaser.Input.Keyboard.JustDown(k.j)) {
+      const picked = this.editorPickAt(ed.cursorRow, ed.cursorCol);
+      if (picked && picked.ref) {
+        const idx = lvl[picked.type].indexOf(picked.ref);
+        const txt = window.prompt('Objekt-JSON editieren:', JSON.stringify(picked.ref));
+        if (txt) {
+          try {
+            const parsed = JSON.parse(txt);
+            if (Array.isArray(parsed)) lvl[picked.type][idx] = parsed;
+          } catch {
+            this.editor.message = 'Objekt-JSON ungueltig';
+            this.editor.messageTimer = 1.4;
+          }
+        }
+      } else {
+        const txt = window.prompt('Level-JSON editieren:', JSON.stringify(lvl, null, 2));
+        if (txt) {
+          try {
+            this.editor.activeLevel = normalizeLevel(JSON.parse(txt));
+            this.buildTileCache(this.editor.activeLevel);
+          } catch {
+            this.editor.message = 'Level-JSON ungueltig';
+            this.editor.messageTimer = 1.4;
+          }
+        }
+      }
+    }
 
-  // Arrow in the passage
-  ctx.fillStyle = '#fdd835';
-  ctx.font = '11px "Press Start 2P", monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('►', sx + w / 2, sy + h * 0.62);
-}
+    if (Phaser.Input.Keyboard.JustDown(k.bracketLeft)) {
+      ed.toolIndex = (ed.toolIndex - 1 + ed.tools.length) % ed.tools.length;
+      ed.pendingRange = null;
+    }
+    if (Phaser.Input.Keyboard.JustDown(k.bracketRight)) {
+      ed.toolIndex = (ed.toolIndex + 1) % ed.tools.length;
+      ed.pendingRange = null;
+    }
 
-// Decorative flowers drawn on top of the grass (pixel-art style)
-const FLOWER_DEFS_DRAW = [
-  { wx: 10 * TILE + 10 }, { wx: 17 * TILE + 6  },
-  { wx: 35 * TILE + 14 }, { wx: 47 * TILE + 8  },
-  { wx: 53 * TILE + 12 },
-];
+    const digits = [k.one, k.two, k.three, k.four, k.five, k.six, k.seven, k.eight, k.nine, k.zero];
+    for (let i = 0; i < digits.length; i++) {
+      if (Phaser.Input.Keyboard.JustDown(digits[i])) ed.toolIndex = clamp(i, 0, ed.tools.length - 1);
+    }
 
-function drawFlowers() {
-  // Flowers sit on top of ground row 11 (y = 11 * TILE)
-  const groundY = 11 * TILE;
-  for (const f of FLOWER_DEFS_DRAW) {
-    const sx = Math.floor(f.wx - cameraX);
-    if (sx < -12 || sx > CANVAS_W + 12) continue;
+    if (k.left.isDown) ed.cursorCol = clamp(ed.cursorCol - 1, 0, lvl.cols - 1);
+    if (k.right.isDown) ed.cursorCol = clamp(ed.cursorCol + 1, 0, lvl.cols - 1);
+    if (k.up.isDown) ed.cursorRow = clamp(ed.cursorRow - 1, 0, ROWS - 1);
+    if (k.down.isDown) ed.cursorRow = clamp(ed.cursorRow + 1, 0, ROWS - 1);
 
-    // Stem
-    ctx.fillStyle = '#388e3c';
-    ctx.fillRect(sx,     groundY - 10, 2, 10);
-    // Left leaf
-    ctx.fillRect(sx - 3, groundY - 6,  4, 3);
-    // Flower head (red)
-    ctx.fillStyle = '#e53935';
-    ctx.fillRect(sx - 2, groundY - 14, 6, 5);
-    // Centre dot (yellow)
-    ctx.fillStyle = '#fdd835';
-    ctx.fillRect(sx,     groundY - 13, 2, 3);
-  }
-}
+    if (Phaser.Input.Keyboard.JustDown(k.space)) this.editorApplyTool(ed.cursorRow, ed.cursorCol);
+    if (Phaser.Input.Keyboard.JustDown(k.del) || Phaser.Input.Keyboard.JustDown(k.back)) this.editorEraseAt(ed.cursorRow, ed.cursorCol);
 
-function drawPlayer() {
-  const sx = Math.floor(player.x - cameraX);
-  const sy = Math.floor(player.y);
-  const w  = player.w;
-  const h  = player.h;
-  const fr = player.facing > 0;
-  const fluttering = !player.onGround &&
-    (keys.has('Space') || keys.has('ArrowUp'));
-
-  // Wings (behind body, spread when fluttering)
-  ctx.fillStyle = '#2e7d32';
-  if (fluttering) {
-    ctx.fillRect(sx - 6, sy + 2, 8, 12);
-    ctx.fillRect(sx + w - 2, sy + 2, 8, 12);
-  } else if (!player.onGround) {
-    ctx.fillRect(sx - 3, sy + 8, 5, 8);
-    ctx.fillRect(sx + w - 2, sy + 8, 5, 8);
-  } else {
-    ctx.fillRect(sx + 2, sy + 10, w - 4, 8);
+    ed.cameraX = clamp(ed.cursorCol * TILE - W / 2, 0, lvl.cols * TILE - W);
   }
 
-  // Body
-  ctx.fillStyle = '#43a047';
-  ctx.fillRect(sx + 3, sy + 5, w - 6, h - 5);
-
-  // Belly (lighter stripe)
-  ctx.fillStyle = '#66bb6a';
-  ctx.fillRect(sx + 6, sy + 10, w - 12, h - 14);
-
-  // Head
-  ctx.fillStyle = '#66bb6a';
-  ctx.fillRect(sx + 4, sy, w - 8, 14);
-
-  // Eye
-  ctx.fillStyle = '#111';
-  const ex = fr ? sx + w - 10 : sx + 4;
-  ctx.fillRect(ex, sy + 3, 4, 4);
-  // Shine
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(ex + 1, sy + 3, 2, 2);
-
-  // Beak
-  ctx.fillStyle = '#fdd835';
-  if (fr) {
-    ctx.fillRect(sx + w - 4, sy + 8, 6, 3);
-    ctx.fillRect(sx + w - 4, sy + 11, 5, 2);
-  } else {
-    ctx.fillRect(sx - 2, sy + 8, 6, 3);
-    ctx.fillRect(sx - 1, sy + 11, 5, 2);
+  isSolid(row, col) {
+    if (!this.currentLevel) return false;
+    if (row < 0 || row >= ROWS || col < 0 || col >= this.currentLevel.cols) return false;
+    return this.currentLevel.tiles[row][col] === 1;
   }
 
-  // Cheek patch
-  ctx.fillStyle = '#ffee58';
-  ctx.fillRect(fr ? sx + w - 10 : sx + 4, sy + 7, 4, 3);
-}
+  resolvePlayerCollisionX() {
+    const p = this.player;
+    if (!p || p.vx === 0) return;
 
-function drawCoin(coin) {
-  const sx = coin.x - cameraX;
-  // Outer circle
-  ctx.fillStyle = '#fdd835';
-  ctx.beginPath();
-  ctx.arc(sx, coin.y, COIN_R, 0, Math.PI * 2);
-  ctx.fill();
-  // Inner highlight
-  ctx.fillStyle = '#fff176';
-  ctx.beginPath();
-  ctx.arc(sx - 2, coin.y - 2, COIN_R * 0.42, 0, Math.PI * 2);
-  ctx.fill();
-  // Rim
-  ctx.strokeStyle = '#f9a825';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(sx, coin.y, COIN_R, 0, Math.PI * 2);
-  ctx.stroke();
-}
+    const r1 = clamp(Math.floor(p.y / TILE), 0, ROWS - 1);
+    const r2 = clamp(Math.floor((p.y + p.h - 1) / TILE), 0, ROWS - 1);
+    const c1 = Math.floor(p.x / TILE);
+    const c2 = Math.floor((p.x + p.w - 1) / TILE);
 
-function drawFood(food) {
-  const sx = food.x - cameraX;
-  // Seed shape (slightly oval)
-  ctx.fillStyle = '#ff7043';
-  ctx.beginPath();
-  ctx.ellipse(sx, food.y, FOOD_R, FOOD_R * 0.8, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // Highlight
-  ctx.fillStyle = '#ffab91';
-  ctx.beginPath();
-  ctx.ellipse(sx - 1.5, food.y - 1.5, FOOD_R * 0.35, FOOD_R * 0.28, 0, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawHUD() {
-  // Dark semi-transparent bar
-  ctx.fillStyle = 'rgba(0,0,0,0.72)';
-  ctx.fillRect(0, 0, CANVAS_W, 44);
-
-  ctx.textBaseline = 'middle';
-
-  // Score (left)
-  ctx.fillStyle = '#fdd835';
-  ctx.font = '8px "Press Start 2P", monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText(`SCORE ${score}`, 10, 22);
-
-  // Level name below score
-  ctx.fillStyle = '#a5d6a7';
-  ctx.font = '5px "Press Start 2P", monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText('LEVEL 1 \u2013 Der Garten', 10, 37);
-
-  // Food meter (center)
-  const barW = 180, barH = 14;
-  const barX = CANVAS_W / 2 - barW / 2;
-  const barY = 15;
-
-  ctx.fillStyle = '#333';
-  ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
-
-  const fillFrac  = foodMeter / FOOD_MAX;
-  const barColor  = fillFrac > 0.5 ? '#4caf50'
-                  : fillFrac > 0.25 ? '#ffc107'
-                  : '#f44336';
-  ctx.fillStyle = barColor;
-  ctx.fillRect(barX, barY, Math.max(0, fillFrac * barW), barH);
-
-  // Blinking border when food is critically low
-  if (fillFrac <= 0.25) {
-    const blink = Math.floor(Date.now() / 300) % 2 === 0;
-    ctx.strokeStyle = blink ? '#f44336' : '#ff8a80';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(barX - 1, barY - 1, barW + 2, barH + 2);
-  } else {
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(barX - 1, barY - 1, barW + 2, barH + 2);
-  }
-
-  // Food label above bar
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.font = '5px "Press Start 2P", monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('FOOD', CANVAS_W / 2, barY + barH / 2 + 1);
-
-  // Level label (below the HUD bar, right side)
-  const levelLabel = currentLevel === 1 ? 'LEVEL 1' : 'LEVEL 2 \u2013 DER WALD';
-  ctx.fillStyle = '#90caf9';
-  ctx.font = '6px "Press Start 2P", monospace';
-  ctx.textAlign = 'right';
-  ctx.fillText(levelLabel, CANVAS_W - 10, 10);
-
-  // Best score (right)
-  ctx.fillStyle = '#90caf9';
-  ctx.font = '8px "Press Start 2P", monospace';
-  ctx.textAlign = 'right';
-  ctx.fillText(`BEST ${bestScore}`, CANVAS_W - 10, 33);
-  ctx.fillText(`BEST ${bestScore}`, CANVAS_W - 10, 22);
-
-  // Level name (top center, below food bar)
-  ctx.fillStyle = 'rgba(255,255,255,0.80)';
-  ctx.font = '5px "Press Start 2P", monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('LEVEL 1 – Der Garten', CANVAS_W / 2, 36);
-
-  // Gelbi icon (small yellow budgie) in the top-right corner as rescue reminder
-  const gx = CANVAS_W - 52;
-  const gy = 4;
-  ctx.fillStyle = '#fdd835';
-  ctx.fillRect(gx + 3, gy + 2, 8, 9);  // body
-  ctx.fillRect(gx + 4, gy,     6, 5);  // head
-  ctx.fillStyle = '#111';
-  ctx.fillRect(gx + 7, gy + 1, 2, 2);  // eye
-}
-
-// ─── SCREEN DRAWING ──────────────────────────────────────────────────────────
-function drawMenuScreen() {
-  // Sky
-  const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-  grad.addColorStop(0, '#3a8fd4');
-  grad.addColorStop(1, '#a8d8f0');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  // Ground strip
-  ctx.fillStyle = '#3a7d44';
-  ctx.fillRect(0, CANVAS_H - 60, CANVAS_W, 8);
-  ctx.fillStyle = '#7a4e2d';
-  ctx.fillRect(0, CANVAS_H - 52, CANVAS_W, 52);
-
-  // Simple decorative clouds
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  drawCloudShape(60,  50, 110, 38);
-  drawCloudShape(340, 70,  90, 30);
-  drawCloudShape(590, 40, 120, 42);
-
-  // Overlay
-  ctx.fillStyle = 'rgba(0,0,10,0.45)';
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  // Title
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = '#000';
-  ctx.shadowBlur = 12;
-
-  ctx.fillStyle = '#fdd835';
-  ctx.font = '28px "Press Start 2P", monospace';
-  ctx.fillText('BUDGIE', CANVAS_W / 2, 130);
-  ctx.fillStyle = '#fff';
-  ctx.font = '18px "Press Start 2P", monospace';
-  ctx.fillText('PLATFORMER', CANVAS_W / 2, 170);
-
-  ctx.shadowBlur = 0;
-
-  // Decorative budgie icon
-  const bx = CANVAS_W / 2 - 18, by = 200;
-  ctx.fillStyle = '#2e7d32';
-  ctx.fillRect(bx - 8, by + 8, 10, 14);
-  ctx.fillRect(bx + 36, by + 8, 10, 14);
-  ctx.fillStyle = '#43a047';
-  ctx.fillRect(bx + 4, by + 6, 28, 30);
-  ctx.fillStyle = '#66bb6a';
-  ctx.fillRect(bx + 8, by, 20, 14);
-  ctx.fillStyle = '#111';
-  ctx.fillRect(bx + 20, by + 3, 5, 5);
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(bx + 21, by + 3, 2, 2);
-  ctx.fillStyle = '#fdd835';
-  ctx.fillRect(bx + 28, by + 8, 8, 4);
-
-  // Controls
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.font = '7px "Press Start 2P", monospace';
-  ctx.fillText('← → MOVE    SPACE / ↑  JUMP & FLUTTER', CANVAS_W / 2, 278);
-  ctx.fillText('Collect coins & seeds \u00b7 reach the gate', CANVAS_W / 2, 300);
-
-  // Press Enter (blinking)
-  if (Math.floor(Date.now() / 550) % 2 === 0) {
-    ctx.fillStyle = '#fdd835';
-    ctx.font = '10px "Press Start 2P", monospace';
-    ctx.fillText('PRESS  ENTER  TO  START', CANVAS_W / 2, 345);
-  }
-}
-
-function drawIntroScreen() {
-  // Black background
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  // ── Cage pixel art ──────────────────────────────────────────────────────────
-  const cageX = CANVAS_W / 2 - 36;
-  const cageY = 60;
-  const cageW = 72;
-  const cageH = 80;
-
-  // Cage bars (grey)
-  ctx.fillStyle = '#aaa';
-  ctx.fillRect(cageX, cageY, cageW, 4);          // top bar
-  ctx.fillRect(cageX, cageY + cageH - 4, cageW, 4); // bottom bar
-  ctx.fillRect(cageX, cageY, 4, cageH);           // left side
-  ctx.fillRect(cageX + cageW - 4, cageY, 4, cageH); // right side
-  // Vertical bars
-  for (let i = 1; i < 5; i++) {
-    ctx.fillRect(cageX + Math.round(i * cageW / 5), cageY + 4, 3, cageH - 8);
-  }
-
-  // Yellow budgie (Gelbi) inside cage
-  ctx.fillStyle = '#fdd835';
-  ctx.fillRect(cageX + cageW / 2 - 10, cageY + cageH / 2 - 10, 20, 22); // body
-  ctx.fillRect(cageX + cageW / 2 - 6,  cageY + cageH / 2 - 20, 14, 14); // head
-  // Eye
-  ctx.fillStyle = '#111';
-  ctx.fillRect(cageX + cageW / 2 + 2, cageY + cageH / 2 - 17, 4, 4);
-
-  // ── Story text ───────────────────────────────────────────────────────────────
-  ctx.fillStyle = '#fff';
-  ctx.font = '9px "Press Start 2P", monospace';
-  ctx.fillText('Dein Freund Gelbi wurde vom', CANVAS_W / 2, 185);
-  ctx.fillText('Jäger gefangen!', CANVAS_W / 2, 208);
-
-  ctx.fillStyle = '#fdd835';
-  ctx.font = '11px "Press Start 2P", monospace';
-  ctx.fillText('Rette ihn!', CANVAS_W / 2, 240);
-
-  // ── Gelbi reminder icon + label ──────────────────────────────────────────────
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.font = '7px "Press Start 2P", monospace';
-  ctx.fillText('Du bist der grüne Wellensittich.', CANVAS_W / 2, 290);
-  ctx.fillText('Erreiche das Jagdhaus am Ende des Waldes!', CANVAS_W / 2, 312);
-
-  // ── ENTER prompt (blinking) ──────────────────────────────────────────────────
-  if (Math.floor(Date.now() / 550) % 2 === 0) {
-    ctx.fillStyle = '#fdd835';
-    ctx.font = '10px "Press Start 2P", monospace';
-    ctx.fillText('PRESS  ENTER  TO  START', CANVAS_W / 2, 370);
-  }
-}
-
-function drawGameOverScreen() {
-  // Re-render the level background for context
-  if (currentLevel === 2) {
-    drawForestBackground();
-  } else {
-    drawBackground();
-  }
-  drawLevelTiles();
-
-  ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = '#000';
-  ctx.shadowBlur = 10;
-
-  ctx.fillStyle = '#f44336';
-  ctx.font = '22px "Press Start 2P", monospace';
-  ctx.fillText('GAME  OVER', CANVAS_W / 2, 175);
-
-  ctx.shadowBlur = 0;
-
-  ctx.fillStyle = '#fff';
-  ctx.font = '10px "Press Start 2P", monospace';
-  ctx.fillText(`SCORE :  ${score}`, CANVAS_W / 2, 225);
-  ctx.fillText(`BEST  :  ${bestScore}`, CANVAS_W / 2, 255);
-
-  if (Math.floor(Date.now() / 550) % 2 === 0) {
-    ctx.fillStyle = '#fdd835';
-    ctx.font = '9px "Press Start 2P", monospace';
-    ctx.fillText('PRESS  R  TO  RESTART', CANVAS_W / 2, 315);
-  }
-}
-
-function drawTransitionScreen() {
-  // Draw the game world in background (frozen)
-  drawBackground();
-  drawLevelTiles();
-  drawFlowers();
-  if (gardenGate) drawGardenGate();
-  for (const food of foods) if (!food.collected) drawFood(food);
-  for (const coin of coins) if (!coin.collected) drawCoin(coin);
-  drawPlayer();
-
-  // Dark overlay
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = '#000';
-  ctx.shadowBlur = 12;
-
-  ctx.fillStyle = '#a5d6a7';
-  ctx.font = '8px "Press Start 2P", monospace';
-  ctx.fillText('LEVEL 1 \u2013 Der Garten  GESCHAFFT!', CANVAS_W / 2, 180);
-
-  ctx.fillStyle = '#fdd835';
-  ctx.font = '12px "Press Start 2P", monospace';
-  ctx.fillText('Weiter in den Wald...', CANVAS_W / 2, 220);
-
-  ctx.shadowBlur = 0;
-
-  // Animated dots
-  const dots = '.'.repeat((Math.floor(Date.now() / 400) % 4));
-  ctx.fillStyle = 'rgba(255,255,255,0.7)';
-  ctx.font = '9px "Press Start 2P", monospace';
-  ctx.fillText(dots, CANVAS_W / 2, 255);
-
-  ctx.fillStyle = 'rgba(255,255,255,0.45)';
-  ctx.font = '6px "Press Start 2P", monospace';
-  ctx.fillText('ENTER / LEERTASTE zum \u00dcberspringen', CANVAS_W / 2, 295);
-}
-
-function drawLevel2Screen() {
-  // Forest-green sky gradient for "Der Wald"
-  const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-  grad.addColorStop(0, '#1b5e20');
-  grad.addColorStop(0.6, '#2e7d32');
-  grad.addColorStop(1, '#388e3c');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  // Scattered leaf particles
-  const colours = ['#4caf50','#66bb6a','#2e7d32','#a5d6a7','#81c784'];
-  const seed    = Math.floor(Date.now() / 120);
-  for (let i = 0; i < 30; i++) {
-    const lx = ((i * 317 + seed * 5) % CANVAS_W);
-    const ly = ((i * 191 + seed * 9) % CANVAS_H);
-    ctx.fillStyle = colours[i % colours.length];
-    ctx.fillRect(lx, ly, 5, 5);
-  }
-
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = '#000';
-  ctx.shadowBlur = 14;
-
-  ctx.fillStyle = '#a5d6a7';
-  ctx.font = '8px "Press Start 2P", monospace';
-  ctx.fillText('LEVEL 2 \u2013 Der Wald', CANVAS_W / 2, 150);
-
-  ctx.fillStyle = '#fdd835';
-  ctx.font = '14px "Press Start 2P", monospace';
-  ctx.fillText('COMING SOON', CANVAS_W / 2, 190);
-
-  ctx.shadowBlur = 0;
-
-  ctx.fillStyle = '#fff';
-  ctx.font = '9px "Press Start 2P", monospace';
-  ctx.fillText(`Level 1 Score :  ${score}`, CANVAS_W / 2, 255);
-  ctx.fillText(`Best Score    :  ${bestScore}`, CANVAS_W / 2, 280);
-
-  if (Math.floor(Date.now() / 550) % 2 === 0) {
-    ctx.fillStyle = '#4caf50';
-    ctx.font = '8px "Press Start 2P", monospace';
-    ctx.fillText('R  \u2013  Level 1 nochmal spielen', CANVAS_W / 2, 345);
-  }
-}
-
-function drawWinScreen() {
-  drawLevel2Screen();
-}
-
-// ─── LEVEL TILE RENDERING ────────────────────────────────────────────────────
-function drawLevelTiles() {
-  const startCol = Math.max(0,      Math.floor(cameraX / TILE));
-  const endCol   = Math.min(COLS-1, Math.floor((cameraX + CANVAS_W) / TILE) + 1);
-
-  for (let row = 0; row < ROWS; row++) {
-    for (let col = startCol; col <= endCol; col++) {
-      if (tileMap[row][col] === 1) {
-        drawTile(col * TILE - cameraX, row * TILE, row);
+    for (let r = r1; r <= r2; r++) {
+      for (let c = c1; c <= c2; c++) {
+        if (!this.isSolid(r, c)) continue;
+        const tx = c * TILE;
+        if (p.vx > 0) p.x = tx - p.w;
+        else p.x = tx + TILE;
+        p.vx = 0;
       }
     }
   }
-}
 
-// ─── FULL GAME RENDER ────────────────────────────────────────────────────────
-function drawGame() {
-  if (currentLevel === 2) {
-    drawForestBackground();
-  } else {
-    drawBackground();
-  }
-  drawLevelTiles();
+  resolvePlayerCollisionY() {
+    const p = this.player;
+    const c1 = clamp(Math.floor(p.x / TILE), 0, this.currentLevel.cols - 1);
+    const c2 = clamp(Math.floor((p.x + p.w - 1) / TILE), 0, this.currentLevel.cols - 1);
+    const r1 = Math.floor(p.y / TILE);
+    const r2 = Math.floor((p.y + p.h) / TILE);
 
-  // Flower decorations
-  drawFlowers();
-
-  // Garden gate
-  if (gardenGate) drawGardenGate();
-  // Spikes (Level 2)
-  for (const s of spikes) drawSpike(s);
-
-  // Beetles (Level 2, non-defeated)
-  for (const b of beetles)
-    if (!b.defeated) drawBeetle(b);
-
-  // Birdhouse / exit
-  if (birdhouse) drawBirdhouse();
-
-  // Foods
-  for (const food of foods)
-    if (!food.collected) drawFood(food);
-
-  // Coins
-  for (const coin of coins)
-    if (!coin.collected) drawCoin(coin);
-
-  // Player
-  drawPlayer();
-
-  // HUD (on top of everything)
-  drawHUD();
-}
-
-// ─── GAME LOOP ───────────────────────────────────────────────────────────────
-let lastTime = 0;
-
-function loop(timestamp) {
-  const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap at 50 ms
-  lastTime = timestamp;
-
-  switch (gameState) {
-    case 'menu':
-      drawMenuScreen();
-      break;
-    case 'intro':
-      drawIntroScreen();
-      break;
-    case 'playing':
-      update(dt);
-      drawGame();
-      break;
-    case 'transitioning':
-      update(dt);
-      drawTransitionScreen();
-      break;
-    case 'level2':
-      drawLevel2Screen();
-      break;
-    case 'gameover':
-      drawGameOverScreen();
-      break;
-    case 'win':
-      drawWinScreen();
-      break;
+    for (let r = r1; r <= r2; r++) {
+      for (let c = c1; c <= c2; c++) {
+        if (!this.isSolid(r, c)) continue;
+        const ty = r * TILE;
+        if (p.vy >= 0) {
+          p.y = ty - p.h;
+          p.vy = 0;
+          p.onGround = true;
+        } else {
+          p.y = ty + TILE;
+          p.vy = 0;
+        }
+      }
+    }
   }
 
-  requestAnimationFrame(loop);
+  overlap(ax, ay, aw, ah, bx, by, bw, bh) {
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+
+  takeDamage(sourceX) {
+    const p = this.player;
+    if (!p || p.invuln > 0) return;
+
+    this.lives -= 1;
+    p.invuln = 1.0;
+    p.vy = -280;
+    p.vx = (p.x < sourceX ? -1 : 1) * 140;
+
+    if (this.lives <= 0) {
+      this.bestScore = Math.max(this.bestScore, this.score);
+      this.mode = MODE_GAMEOVER;
+      this.overlay.setText(['GAME OVER', '', 'R: Neustart', 'E: Editor']);
+      return;
+    }
+
+    this.food = Math.max(0, this.food - 18);
+    p.x = this.currentLevel.spawn.col * TILE;
+    p.y = this.currentLevel.spawn.row * TILE;
+    p.vx = 0;
+    p.vy = 0;
+    this.projectiles.forEach((p2) => p2.sprite.destroy());
+    this.projectiles = [];
+
+    for (const t of this.traps) {
+      t.active = true;
+      t.timer = 0;
+      t.state = 'idle';
+    }
+  }
+
+  updatePlay(dt) {
+    const p = this.player;
+    if (!p || !this.currentLevel) return;
+
+    const left = this.keys.left.isDown || this.keys.a.isDown;
+    const right = this.keys.right.isDown || this.keys.d.isDown;
+    const jumpHeld = this.keys.up.isDown || this.keys.w.isDown || this.keys.space.isDown;
+
+    if (Phaser.Input.Keyboard.JustDown(this.keys.space) || Phaser.Input.Keyboard.JustDown(this.keys.up) || Phaser.Input.Keyboard.JustDown(this.keys.w)) {
+      p.jumpBuffer = 0.12;
+    }
+
+    if (p.invuln > 0) p.invuln -= dt;
+    if (p.netSlow > 0) p.netSlow -= dt;
+    if (p.jumpBuffer > 0) p.jumpBuffer -= dt;
+
+    if (p.onGround) p.coyote = 0.11;
+    else p.coyote -= dt;
+
+    let speed = p.netSlow > 0 ? 120 : 210;
+    const targetVx = left && !right ? -speed : right && !left ? speed : 0;
+    const accel = p.onGround ? 1850 : 980;
+    const friction = 1700;
+    if (targetVx !== 0) {
+      if (p.vx < targetVx) p.vx = Math.min(targetVx, p.vx + accel * dt);
+      else p.vx = Math.max(targetVx, p.vx - accel * dt);
+      p.face = targetVx < 0 ? -1 : 1;
+    } else {
+      if (p.vx > 0) p.vx = Math.max(0, p.vx - friction * dt);
+      if (p.vx < 0) p.vx = Math.min(0, p.vx + friction * dt);
+    }
+
+    if (p.trapped > 0) {
+      p.trapped -= dt;
+      p.vx = 0;
+    } else if (p.jumpBuffer > 0 && (p.onGround || p.coyote > 0)) {
+      p.vy = -540;
+      p.onGround = false;
+      p.coyote = 0;
+      p.jumpBuffer = 0;
+    }
+
+    const gravity = jumpHeld && !p.onGround ? 260 : 920;
+    p.vy += gravity * dt;
+    if (!jumpHeld && p.vy < 0) p.vy += 920 * 2.1 * dt;
+    if (jumpHeld && p.vy > 90) p.vy = 90;
+    if (p.vy > 660) p.vy = 660;
+
+    p.x += p.vx * dt;
+    p.x = clamp(p.x, 0, this.currentLevel.cols * TILE - p.w);
+    this.resolvePlayerCollisionX();
+
+    p.onGround = false;
+    p.y += p.vy * dt;
+    this.resolvePlayerCollisionY();
+
+    if (p.y > H + 80) {
+      this.takeDamage(p.x + p.w / 2);
+    }
+
+    this.food = Math.max(0, this.food - 5.5 * dt);
+    if (this.food <= 0) {
+      this.bestScore = Math.max(this.bestScore, this.score);
+      this.mode = MODE_GAMEOVER;
+      this.overlay.setText(['GAME OVER', '', 'R: Neustart', 'E: Editor']);
+      return;
+    }
+
+    for (const c of this.coins) {
+      if (c.collected) continue;
+      if (this.overlap(p.x, p.y, p.w, p.h, c.x - 8, c.y - 8, 16, 16)) {
+        c.collected = true;
+        c.sprite.setVisible(false);
+        this.score += 10;
+      }
+    }
+
+    for (const f of this.foods) {
+      if (f.collected) continue;
+      if (this.overlap(p.x, p.y, p.w, p.h, f.x - 8, f.y - 8, 16, 16)) {
+        f.collected = true;
+        f.sprite.setVisible(false);
+        this.food = clamp(this.food + 30, 0, 100);
+      }
+    }
+
+    for (const r of this.rescues) {
+      if (r.collected) continue;
+      if (this.overlap(p.x, p.y, p.w, p.h, r.x - 8, r.y - 8, 16, 16)) {
+        r.collected = true;
+        r.sprite.setVisible(false);
+        this.score += 25;
+      }
+    }
+
+    for (const trap of this.traps) {
+      if (trap.type === 'spike') {
+        if (this.overlap(p.x, p.y, p.w, p.h, trap.x, trap.y, trap.w, trap.h)) {
+          this.takeDamage(trap.x + trap.w / 2);
+        }
+      } else if (trap.type === 'net') {
+        if (trap.active && this.overlap(p.x, p.y, p.w, p.h, trap.x, trap.y, trap.w, trap.h)) {
+          trap.active = false;
+          trap.sprite.setAlpha(0.3);
+          p.trapped = 1.2;
+          p.netSlow = 1.8;
+        }
+      } else if (trap.type === 'pressure') {
+        const triggerY = trap.y - 20;
+        if (trap.state === 'idle' && this.overlap(p.x, p.y, p.w, p.h, trap.x, triggerY, trap.w, 26)) {
+          trap.state = 'warn';
+          trap.timer = 0.34;
+        } else if (trap.state === 'warn') {
+          trap.timer -= dt;
+          if (trap.timer <= 0) {
+            trap.state = 'strike';
+            trap.timer = 0.25;
+          }
+        } else if (trap.state === 'strike') {
+          trap.timer -= dt;
+          if (this.overlap(p.x, p.y, p.w, p.h, trap.x, trap.y - 38, trap.w, 38)) {
+            this.takeDamage(trap.x + trap.w / 2);
+          }
+          if (trap.timer <= 0) {
+            trap.state = 'idle';
+            trap.timer = 0;
+          }
+        }
+      }
+    }
+
+    for (const enemy of this.enemies) {
+      if (!enemy.alive) continue;
+
+      enemy.x += enemy.vx * dt;
+      if (enemy.x <= enemy.left) {
+        enemy.x = enemy.left;
+        enemy.vx = Math.abs(enemy.vx);
+      }
+      if (enemy.x >= enemy.right) {
+        enemy.x = enemy.right;
+        enemy.vx = -Math.abs(enemy.vx);
+      }
+
+      if (enemy.type === 'raven') {
+        enemy.phase += dt * 8;
+        enemy.y += Math.sin(enemy.phase) * enemy.amp * dt;
+      }
+
+      if (enemy.type === 'minion') {
+        enemy.shootTimer -= dt;
+        if (enemy.shootTimer <= 0) {
+          enemy.shootTimer = enemy.shootCd;
+          const dir = (p.x + p.w / 2) < (enemy.x + enemy.w / 2) ? -1 : 1;
+          const proj = this.add.sprite(enemy.x + enemy.w / 2, enemy.y + 16, 'projectile0').setOrigin(0.5, 0.5).setDepth(31).play('anim_projectile');
+          this.projectiles.push({ x: enemy.x + enemy.w / 2, y: enemy.y + 16, w: 10, h: 6, vx: dir * enemy.projSpeed, sprite: proj, alive: true });
+        }
+      }
+
+      if (this.overlap(p.x, p.y, p.w, p.h, enemy.x, enemy.y, enemy.w, enemy.h)) {
+        const stomp = p.vy > 40 && (p.y + p.h) <= enemy.y + 12;
+        if (stomp) {
+          if (enemy.type === 'minion') {
+            enemy.hp -= 1;
+            p.vy = -280;
+            if (enemy.hp <= 0) {
+              enemy.alive = false;
+              enemy.sprite.setVisible(false);
+              this.score += 120;
+            }
+          } else {
+            enemy.alive = false;
+            enemy.sprite.setVisible(false);
+            this.score += enemy.type === 'raven' ? 40 : 30;
+            p.vy = -320;
+          }
+        } else {
+          this.takeDamage(enemy.x + enemy.w / 2);
+        }
+      }
+    }
+
+    for (const proj of this.projectiles) {
+      if (!proj.alive) continue;
+      proj.x += proj.vx * dt;
+      if (proj.x < -40 || proj.x > this.currentLevel.cols * TILE + 40) {
+        proj.alive = false;
+        proj.sprite.setVisible(false);
+        continue;
+      }
+      if (this.overlap(p.x, p.y, p.w, p.h, proj.x - proj.w / 2, proj.y - proj.h / 2, proj.w, proj.h)) {
+        proj.alive = false;
+        proj.sprite.setVisible(false);
+        this.takeDamage(proj.x);
+      }
+    }
+    this.projectiles = this.projectiles.filter((v) => v.alive);
+
+    const rescuesRemaining = this.rescues.filter((v) => !v.collected).length;
+    const minionsRemaining = this.enemies.filter((v) => v.alive && v.type === 'minion').length;
+    const goalLocked = !!this.currentLevel.lockGoal;
+    const unlocked = !goalLocked || (rescuesRemaining === 0 && minionsRemaining === 0);
+
+    if (this.overlap(p.x, p.y, p.w, p.h, this.goalX(), this.goalY(), this.currentLevel.goal.w, this.currentLevel.goal.h)) {
+      if (!unlocked) {
+        this.overlay.setText(['ZIEL VERRIEGELT', `${rescuesRemaining} Federn / ${minionsRemaining} Waechter`]);
+      } else {
+        this.overlay.setText('');
+        this.bestScore = Math.max(this.bestScore, this.score);
+        if (this.currentLevel.key === 'custom') {
+          this.mode = MODE_WIN;
+          this.overlay.setText(['CUSTOM LEVEL GESCHAFFT', '', 'R: Neustart', 'E: Editor']);
+        } else if (this.levelIndex < this.levels.length - 1) {
+          this.levelIndex += 1;
+          this.loadLevel(this.levels[this.levelIndex], true);
+        } else {
+          this.mode = MODE_WIN;
+          this.overlay.setText(['GELBI IST FREI!', '', 'R: Neustart', 'E: Editor']);
+        }
+      }
+    } else if (this.overlay.text.startsWith('ZIEL VERRIEGELT')) {
+      this.overlay.setText('');
+    }
+
+    this.cameraX = clamp(p.x + p.w / 2 - W / 2, 0, this.currentLevel.cols * TILE - W);
+
+    this.syncRender();
+    this.updateHudText();
+  }
+
+  goalX() {
+    return this.currentLevel.goal.col * TILE;
+  }
+
+  goalY() {
+    return (this.currentLevel.goal.row + 1) * TILE - this.currentLevel.goal.h;
+  }
+
+  updateGoalSprite() {
+    const gx = this.goalX();
+    const gy = this.goalY();
+    this.goalSprite.setPosition(gx, gy);
+    this.goalSprite.setDisplaySize(this.currentLevel.goal.w, this.currentLevel.goal.h);
+  }
+
+  syncRender() {
+    if (this.tileRT) this.tileRT.setPosition(-this.cameraX, 0);
+
+    for (const c of this.coins) {
+      if (!c.collected) c.sprite.setPosition(c.x - this.cameraX, c.y);
+      c.sprite.setVisible(!c.collected && this.isVisibleX(c.x, 24));
+    }
+    for (const f of this.foods) {
+      if (!f.collected) f.sprite.setPosition(f.x - this.cameraX, f.y);
+      f.sprite.setVisible(!f.collected && this.isVisibleX(f.x, 24));
+    }
+    for (const r of this.rescues) {
+      if (!r.collected) r.sprite.setPosition(r.x - this.cameraX, r.y);
+      r.sprite.setVisible(!r.collected && this.isVisibleX(r.x, 24));
+    }
+
+    for (const t of this.traps) {
+      t.sprite.setPosition(t.x - this.cameraX, t.y);
+      t.sprite.setVisible(this.isVisibleRect(t.x, t.y, t.w, t.h));
+      if (t.type === 'pressure') {
+        if (t.state === 'idle') t.sprite.setTexture('pressure0');
+        else if (t.state === 'warn') t.sprite.setTexture('pressure1');
+        else t.sprite.setTexture('pressure2');
+      }
+    }
+
+    for (const e of this.enemies) {
+      e.sprite.setPosition(e.x - this.cameraX, e.y);
+      e.sprite.setVisible(e.alive && this.isVisibleRect(e.x, e.y, e.w, e.h));
+      if (e.vx < 0) {
+        e.sprite.setFlipX(true);
+      } else {
+        e.sprite.setFlipX(false);
+      }
+    }
+
+    for (const p of this.projectiles) {
+      p.sprite.setPosition(p.x - this.cameraX, p.y);
+      p.sprite.setVisible(p.alive && this.isVisibleRect(p.x - 5, p.y - 3, 10, 6));
+    }
+
+    this.player.sprite.setPosition(this.player.x - this.cameraX, this.player.y);
+    this.player.sprite.setVisible(!(this.player.invuln > 0 && Math.floor(this.time.now / 70) % 2 === 0));
+    this.player.sprite.setFlipX(this.player.face < 0);
+
+    this.goalSprite.setPosition(this.goalX() - this.cameraX, this.goalY());
+    this.goalSprite.setVisible(this.isVisibleRect(this.goalX(), this.goalY(), this.currentLevel.goal.w, this.currentLevel.goal.h));
+  }
+
+  isVisibleX(x, pad) {
+    return x + pad >= this.cameraX && x - pad <= this.cameraX + W;
+  }
+
+  isVisibleRect(x, y, w, h) {
+    return x + w >= this.cameraX && x <= this.cameraX + W && y + h >= 0 && y <= H;
+  }
+
+  updateEditor(dt) {
+    this.handleEditorKeys();
+
+    if (this.editor.messageTimer > 0) this.editor.messageTimer -= dt;
+    this.editor.cameraX = clamp(this.editor.cursorCol * TILE - W / 2, 0, this.editor.activeLevel.cols * TILE - W);
+
+    if (this.tileRT) this.tileRT.setPosition(-this.editor.cameraX, 0);
+
+    this.overlay.setText('');
+
+    this.updateHudText();
+    this.drawEditorOverlay();
+  }
+
+  drawEditorOverlay() {
+    if (this.gridGraphics) this.gridGraphics.destroy();
+    this.gridGraphics = this.add.graphics().setDepth(45).setScrollFactor(0);
+    const g = this.gridGraphics;
+
+    const lvl = this.editor.activeLevel;
+    const startCol = Math.max(0, Math.floor(this.editor.cameraX / TILE));
+    const endCol = Math.min(lvl.cols - 1, Math.floor((this.editor.cameraX + W) / TILE) + 1);
+
+    g.lineStyle(1, 0xffffff, 0.12);
+    for (let c = startCol; c <= endCol; c++) {
+      const sx = c * TILE - this.editor.cameraX;
+      g.beginPath();
+      g.moveTo(sx, 0);
+      g.lineTo(sx, H);
+      g.strokePath();
+    }
+    for (let r = 0; r <= ROWS; r++) {
+      const sy = r * TILE;
+      g.beginPath();
+      g.moveTo(0, sy);
+      g.lineTo(W, sy);
+      g.strokePath();
+    }
+
+    for (const [row, col] of lvl.coins) this.drawEditorIcon('coin0', row, col, 0xFFFFFF, 24);
+    for (const [row, col] of lvl.foods) this.drawEditorIcon('food0', row, col, 0xFFFFFF, 24);
+    for (const [row, col] of lvl.rescueTokens) this.drawEditorIcon('rescue0', row, col, 0xFFFFFF, 24);
+    for (const [row, col] of lvl.spikes) this.drawEditorIcon('spike0', row, col, 0xFFFFFF, 24);
+    for (const [row, col] of lvl.nets) this.drawEditorIcon('net0', row, col, 0xFFFFFF, 24);
+
+    for (const [r, l, rr] of lvl.beetles) {
+      const x = l * TILE - this.editor.cameraX;
+      const w = (rr - l + 1) * TILE;
+      g.lineStyle(2, 0xff8a80, 0.9);
+      g.strokeRect(x, r * TILE + 10, w, 8);
+      this.drawEditorIcon('beetle0', r, l, 0xFFFFFF, 26);
+    }
+    for (const [r, l, rr] of lvl.ravens) {
+      const x = l * TILE - this.editor.cameraX;
+      const w = (rr - l + 1) * TILE;
+      g.lineStyle(2, 0xb3e5fc, 0.9);
+      g.strokeRect(x, r * TILE + 10, w, 8);
+      this.drawEditorIcon('raven0', r, l, 0xFFFFFF, 28);
+    }
+    for (const [r, c] of lvl.minions) this.drawEditorIcon('minion0', r, c, 0xFFFFFF, 30);
+    for (const c of lvl.pressures) {
+      const sx = c * TILE - this.editor.cameraX;
+      this.add.image(sx + 24, 11 * TILE - 2, 'pressure0').setDepth(44).setDisplaySize(44, 10).setScrollFactor(0);
+    }
+
+    g.lineStyle(2, 0x00e5ff, 1);
+    g.strokeRect(lvl.spawn.col * TILE - this.editor.cameraX + 2, lvl.spawn.row * TILE + 2, TILE - 4, TILE - 4);
+
+    const gy = (lvl.goal.row + 1) * TILE - lvl.goal.h;
+    g.lineStyle(2, 0xffee58, 1);
+    g.strokeRect(lvl.goal.col * TILE - this.editor.cameraX, gy, lvl.goal.w, lvl.goal.h);
+
+    g.lineStyle(2, 0xffffff, 1);
+    g.strokeRect(this.editor.cursorCol * TILE - this.editor.cameraX + 1, this.editor.cursorRow * TILE + 1, TILE - 2, TILE - 2);
+
+    if (this.editor.pendingRange) {
+      g.lineStyle(2, 0xffab91, 1);
+      g.strokeRect(this.editor.pendingRange.col * TILE - this.editor.cameraX + 2, this.editor.pendingRange.row * TILE + 2, TILE - 4, TILE - 4);
+    }
+  }
+
+  drawEditorIcon(key, row, col, tint, size) {
+    const x = col * TILE + TILE / 2 - this.editor.cameraX;
+    const y = row * TILE + TILE / 2;
+    const img = this.add.image(x, y, key).setDepth(44).setDisplaySize(size, size).setScrollFactor(0);
+    if (tint) img.setTint(tint);
+  }
+
+  updateHudText() {
+    if (this.mode === MODE_MENU) {
+      this.hud.setText([
+        'MENU',
+        '',
+        'ENTER: Kampagne',
+        'E: Editor',
+        `BEST: ${this.bestScore}`
+      ]);
+      return;
+    }
+
+    if (this.mode === MODE_EDITOR) {
+      const lvl = this.editor.activeLevel;
+      const msg = this.editor.messageTimer > 0 ? `\nMSG: ${this.editor.message}` : '';
+      this.hud.setText([
+        'EDITOR',
+        `Tool: ${this.editorToolName()} (${this.editor.toolIndex + 1}/${this.editor.tools.length})`,
+        `Theme: ${lvl.theme} | Cols: ${lvl.cols} | GoalLock: ${lvl.lockGoal ? 'ON' : 'OFF'}`,
+        `Coins ${lvl.coins.length} Food ${lvl.foods.length} Rescue ${lvl.rescueTokens.length}`,
+        `Enemies B${lvl.beetles.length} R${lvl.ravens.length} M${lvl.minions.length}`,
+        '[] Tool, Space Place, Del Erase, Enter Playtest',
+        'S/L SaveLoad, X/I ExportImport, J JSON Edit',
+        'N Name, O Objective, C Cols, G Goal, T Theme, K Lock' + msg
+      ]);
+      return;
+    }
+
+    const rescuesLeft = this.rescues.filter((v) => !v.collected).length;
+    const minionsLeft = this.enemies.filter((v) => v.alive && v.type === 'minion').length;
+    const lockInfo = this.currentLevel && this.currentLevel.lockGoal
+      ? `LOCK: ${rescuesLeft} Federn / ${minionsLeft} Waechter`
+      : `GOAL: ${this.currentLevel ? this.currentLevel.goal.label : ''}`;
+
+    this.hud.setText([
+      `${this.currentLevel ? this.currentLevel.name : ''}`,
+      `Score ${this.score} | Best ${this.bestScore}`,
+      `Food ${Math.floor(this.food)} | Lives ${this.lives}`,
+      lockInfo,
+      this.mode === MODE_PLAY ? 'R Neustart | E Editor' : this.mode === MODE_GAMEOVER ? 'R Neustart | E Editor' : 'R Neustart | E Editor'
+    ]);
+  }
+
+  update(time, delta) {
+    const dt = Math.min(delta / 1000, 0.05);
+
+    if (this.mode === MODE_MENU) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.enter)) this.startCampaign();
+      if (Phaser.Input.Keyboard.JustDown(this.keys.e)) this.enterEditor();
+      this.updateHudText();
+      return;
+    }
+
+    if (this.mode === MODE_EDITOR) {
+      this.updateEditor(dt);
+      return;
+    }
+
+    if (this.mode === MODE_PLAY) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.r)) this.startCampaign();
+      if (Phaser.Input.Keyboard.JustDown(this.keys.e)) this.enterEditor();
+      this.updatePlay(dt);
+      return;
+    }
+
+    if (this.mode === MODE_GAMEOVER || this.mode === MODE_WIN) {
+      if (Phaser.Input.Keyboard.JustDown(this.keys.r)) this.startCampaign();
+      if (Phaser.Input.Keyboard.JustDown(this.keys.e)) this.enterEditor();
+      this.updateHudText();
+    }
+  }
 }
 
-// ─── INITIALISE ──────────────────────────────────────────────────────────────
-// Pre-build Level 1 tile map so the game-over screen has level geometry available
-COLS    = 60;
-tileMap = buildTileMap();
-cameraX = 0;
+const gameConfig = {
+  type: Phaser.AUTO,
+  width: W,
+  height: H,
+  parent: 'wrapper',
+  backgroundColor: '#10181b',
+  pixelArt: true,
+  render: {
+    antialias: false,
+    roundPixels: true,
+    powerPreference: 'high-performance'
+  },
+  scene: [BudgiePhaserScene]
+};
 
-requestAnimationFrame(loop);
+new Phaser.Game(gameConfig);

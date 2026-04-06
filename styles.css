@@ -17,14 +17,15 @@ html, body {
 
 #wrapper {
   position: relative;
-  display: inline-block;
+  display: flex;
   line-height: 0;
   box-shadow: 0 0 40px rgba(80, 160, 255, 0.4),
               0 0 80px rgba(80, 160, 255, 0.15);
   border: 2px solid rgba(80, 160, 255, 0.3);
 }
 
-#gameCanvas {
+#gameCanvas,
+#gameCanvas canvas {
   display: block;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
